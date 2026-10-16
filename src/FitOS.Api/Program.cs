@@ -15,6 +15,23 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
+// Browsers may call the API only from the origins listed in configuration (Cors:AllowedOrigins). Empty = no CORS at all.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+if (allowedOrigins.Any(origin => !IsValidOrigin(origin)))
+{
+    throw new InvalidOperationException("Cors:AllowedOrigins must list absolute origins such as https://app.example.com (no wildcard).");
+}
+
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+{
+    if (allowedOrigins.Length > 0)
+    {
+        policy.WithOrigins(allowedOrigins)
+            .WithHeaders("Authorization", "Content-Type", TenantHostResolver.TenantHeader)
+            .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE");
+    }
+}));
+
 builder.Services.AddOptions<TenancyOptions>().Bind(builder.Configuration.GetSection(TenancyOptions.Section));
 builder.Services.AddSingleton<TenantHostResolver>();
 
@@ -79,6 +96,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseExceptionHandler();
+app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseMiddleware<TenantMiddleware>();
@@ -91,4 +109,15 @@ app.MapMembers();
 
 app.Run();
 
-public partial class Program;
+public partial class Program
+{
+    /// <summary>An origin is exactly scheme://host[:port]: no wildcard, no path, no query ("localhost:3000" would parse as scheme "localhost").</summary>
+    private static bool IsValidOrigin(string origin) =>
+        Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+        && uri.Scheme is "http" or "https"
+        && uri.AbsolutePath == "/"
+        && string.IsNullOrEmpty(uri.Query)
+        && string.IsNullOrEmpty(uri.Fragment)
+        && !origin.Contains('*', StringComparison.Ordinal)
+        && !origin.EndsWith('/');
+}

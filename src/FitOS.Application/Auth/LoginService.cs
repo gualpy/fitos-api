@@ -36,6 +36,6 @@ public sealed class LoginService(ILoginStore store, IPasswordService passwords, 
         }
 
         await store.RegisterSuccessAsync(user.UserId, cancellationToken);
-        return new LoginResult(tokens.Issue(user), new LoginUser(user.UserId, user.TenantId, user.DisplayName, user.Role, user.MustChangePassword));
+        return new LoginResult(tokens.Issue(user), new LoginUser(user.UserId, user.TenantId, user.DisplayName, user.Role, user.MustChangePassword, user.CustomerId));
     }
 }

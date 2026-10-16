@@ -150,6 +150,18 @@ public sealed class LoginServiceTests
     }
 
     [Fact]
+    public async Task A_customer_login_carries_the_customer_id_so_clients_can_load_their_own_record()
+    {
+        var customerId = Guid.NewGuid();
+        var customer = new LoginRecord(Guid.NewGuid(), Guid.NewGuid(), "hash:right", UserRole.Customer, "Juan", customerId, true, false, "active");
+        var (service, _, _) = Create(customer);
+
+        var result = await service.LoginAsync("titan", "juan", "right", CancellationToken.None);
+
+        Assert.Equal(customerId, result.User!.CustomerId);
+    }
+
+    [Fact]
     public async Task Platform_admin_has_no_tenant_status_and_can_log_in()
     {
         var admin = new LoginRecord(Guid.NewGuid(), null, "hash:right", UserRole.PlatformAdmin, "Root", null, true, false, null);

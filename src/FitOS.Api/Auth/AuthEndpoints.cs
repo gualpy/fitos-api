@@ -57,7 +57,7 @@ public static class AuthEndpoints
             result.Token!.Value,
             "Bearer",
             result.Token.ExpiresAt,
-            new UserSummary(result.User!.Id, result.User.TenantId, result.User.DisplayName, result.User.Role.ToWire(), result.User.MustChangePassword)));
+            new UserSummary(result.User!.Id, result.User.TenantId, result.User.DisplayName, result.User.Role.ToWire(), result.User.MustChangePassword, result.User.CustomerId)));
     }
 
     private static async Task<IResult> ChangePasswordAsync(
@@ -89,6 +89,7 @@ public static class AuthEndpoints
         id = user.FindFirstValue("sub"),
         tenantId = user.FindFirstValue("tenant_id"),
         role = user.FindFirstValue("role"),
+        customerId = user.FindFirstValue("customer_id"),
         mustChangePassword = user.HasClaim("pwd_change", "true"),
         name = user.FindFirstValue("name"),
     });
@@ -98,7 +99,7 @@ public static class AuthEndpoints
 
     public sealed record LoginRequest(string? Username, string? Password);
 
-    public sealed record UserSummary(Guid Id, Guid? TenantId, string DisplayName, string Role, bool MustChangePassword);
+    public sealed record UserSummary(Guid Id, Guid? TenantId, string DisplayName, string Role, bool MustChangePassword, Guid? CustomerId);
 
     public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
 

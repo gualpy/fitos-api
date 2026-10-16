@@ -18,7 +18,7 @@ public sealed record AccessToken(string Value, DateTimeOffset ExpiresAt);
 
 public sealed record LoginPolicy(int MaxFailures, TimeSpan Lockout);
 
-public sealed record LoginUser(Guid Id, Guid? TenantId, string DisplayName, UserRole Role, bool MustChangePassword = false);
+public sealed record LoginUser(Guid Id, Guid? TenantId, string DisplayName, UserRole Role, bool MustChangePassword = false, Guid? CustomerId = null);
 
 /// <summary>Deliberately has no reason: every failure looks the same to the caller.</summary>
 public sealed record LoginResult(AccessToken? Token, LoginUser? User)

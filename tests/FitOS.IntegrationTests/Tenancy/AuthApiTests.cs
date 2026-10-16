@@ -93,6 +93,7 @@ public sealed class AuthApiTests(PostgresFixture db) : IClassFixture<PostgresFix
         Assert.Equal("Bearer", body.GetProperty("tokenType").GetString());
         Assert.Equal(tenant, body.GetProperty("user").GetProperty("tenantId").GetGuid());
         Assert.Equal("admin", body.GetProperty("user").GetProperty("role").GetString());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("user").GetProperty("customerId").ValueKind); // staff have no customer record
         Assert.DoesNotContain("passwordHash", body.GetRawText(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(tenant.ToString(), new JwtSecurityTokenHandler().ReadJwtToken(token).Claims.Single(c => c.Type == "tenant_id").Value);
 
