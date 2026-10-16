@@ -20,6 +20,9 @@ public interface IMembershipRepository
 
     Task<Membership?> GetAsync(Guid id, CancellationToken cancellationToken);
 
+    /// <summary>Does a non-cancelled membership cover <paramref name="today"/>?</summary>
+    Task<bool> HasCurrentAsync(Guid customerId, DateOnly today, CancellationToken cancellationToken);
+
     void Add(Membership membership);
 
     /// <exception cref="ConflictException"><c>membership_overlap</c> (two requests raced for the same days)</exception>

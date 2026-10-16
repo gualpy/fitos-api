@@ -16,12 +16,15 @@ public sealed class JwtAccessTokenIssuer(IOptions<JwtOptions> options, TimeProvi
 
     public const string CustomerClaim = "customer_id";
 
+    /// <summary>The session this token belongs to; logout revokes exactly that session.</summary>
+    public const string SessionClaim = "sid";
+
     /// <summary>Present ("true") while the user must change a temporary password; blocks everything but /auth/*.</summary>
     public const string PasswordChangeClaim = "pwd_change";
 
     private readonly JwtSecurityTokenHandler _handler = new() { SetDefaultTimesOnTokenCreation = false };
 
-    public AccessToken Issue(LoginRecord user)
+    public AccessToken Issue(LoginRecord user, Guid sessionId)
     {
         var jwt = options.Value;
         var now = time.GetUtcNow();
@@ -33,6 +36,7 @@ public sealed class JwtAccessTokenIssuer(IOptions<JwtOptions> options, TimeProvi
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             new(JwtRegisteredClaimNames.Name, user.DisplayName),
             new(RoleClaim, user.Role.ToWire()),
+            new(SessionClaim, sessionId.ToString()),
         };
 
         // Platform admins have no tenant: the claim is absent, so tenant tables return no rows.

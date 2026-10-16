@@ -84,13 +84,58 @@ Todo va por el token: el gimnasio sale del claim `tenant_id`, nunca de la URL. R
 - Fechas de fin inclusivas y por meses de calendario (un mes que empieza el 31 termina antes: 31 oct → 29 nov). "Hoy" se calcula en la zona horaria del gimnasio.
 - Un id de otro gimnasio responde 404, igual que uno inexistente. Cédula/RUC se validan con dígito verificador.
 
+## Asistencia (hecho)
+| Endpoint | Quién |
+|---|---|
+| `POST /attendance/check-in` (`customerId` o `clientCode` o `rfidCard`; `branchId` si hay varias sedes) | owner, admin, reception |
+| `POST /attendance/check-out` | owner, admin, reception |
+| `GET /attendance?from=&to=&customerId=&result=&page=&pageSize=` | owner, admin, reception |
+| `GET /customers/{id}/attendance` | staff, o el propio socio |
+
+- **Reglas de entrada** (`AccessPolicy`, función pura): socio inactivo → `customer_inactive`; día cerrado → `closed`; fuera de horario → `outside_hours` (abre incluido, cierra excluido); sin membresía vigente → `no_active_membership`, salvo que el gimnasio permita entrar sin plan (`tenant_settings.allow_without_plan`). Sin horarios configurados, la hora no restringe.
+- Toda lectura se **registra**, también las denegadas (con su motivo). Por eso `check-in` responde 201 en ambos casos; el campo `result` dice `granted` o `denied`.
+- **Una sola entrada abierta por socio**, garantizada por la base: una segunda lectura responde 409 `already_inside` (también si dos llegan a la vez). Una entrada olvidada de más de 24 h se cierra de forma visible (`autoClosed`, salida = entrada) para no inventar horas.
+- Fechas y horarios se interpretan en la zona horaria del gimnasio: un filtro `from`/`to` cubre días locales completos.
+
+## Siembra de desarrollo
+Datos de prueba **en la base**, nunca en el código de la app. Solo para bases de desarrollo (exige confirmación explícita):
+```bash
+export FITOS_MIGRATE_CONNECTION="Host=localhost;Username=postgres;Password=$POSTGRES_PASSWORD;Database=fitos"
+FITOS_ALLOW_DEV_SEED=1 FITOS_SEED_PASSWORD='<10+ caracteres, letra y número>' \
+  dotnet run --project src/FitOS.Migrator -- seed-dev <slug-del-gimnasio> <usuario> "<Nombre Apellido>" [días=60]
+```
+Crea (o reutiliza) un socio con usuario real, membresías seguidas que cubren los últimos *N* días y una asistencia por cada día que el gimnasio estuvo abierto según sus horarios (si no hay, escribe lun-vie 06-22, sáb 08-18, dom cerrado). Se puede repetir sin duplicar.
+
 ## Hoja de ruta
 - Listar, consultar y suspender gimnasios (panel de plataforma).
 - Ventas/POS e inventario → control de acceso → reportes; la venta de una membresía se enlazará con `memberships.sale_id`.
 - Facturación: worker de reintentos (outbox) y descarga/envío del comprobante.
 - Dockerfile (necesita `tzdata` para las zonas horarias) y CI.
 
-## Seguridad
-- **Nunca** subas secretos: claves JWT/cifrado, cadenas de conexión con contraseña, certificados (`.p12`, `.pem`) ni `.env`.
-  El `.gitignore` ya los excluye; las claves de desarrollo viven en user-secrets (`scripts/dev-secrets.sh`).
-- Para reportar una vulnerabilidad, abre un aviso privado de seguridad en GitHub (Security → Report a vulnerability) en lugar de un issue público.
+## Sesiones y seguridad (hecho)
+**Sesiones revocables.** El token de acceso dura 15 minutos (`Jwt:AccessTokenMinutes`) y no se puede revocar; por eso es corto. Para no pedir la contraseña
+a cada rato hay un **token de renovación** opaco (256 bits) que **rota en cada uso**:
+- `POST /auth/refresh {refreshToken}` devuelve un par nuevo. Inactividad máxima 8 h (`Auth:IdleMinutes`) y vida absoluta 12 h (`Auth:SessionHours`).
+- Si un token ya usado vuelve a presentarse (copiado), **se revoca toda la sesión** (`refresh_token_reuse` en el registro de eventos). Dos peticiones simultáneas con el mismo token
+  no cuentan como robo: la segunda recibe 409 `refresh_in_progress`.
+- `POST /auth/logout` revoca exactamente esa sesión; **cambiar la contraseña cierra todas** las sesiones del usuario; un usuario desactivado o un gimnasio suspendido
+  no pueden renovar.
+- En la base solo se guarda el SHA-256 del token y las tablas solo se tocan mediante funciones `SECURITY DEFINER`: el rol de la API no puede leerlas.
+
+**Contraseñas.** PBKDF2-HMAC-SHA512 con 210 000 iteraciones (`Auth:PasswordIterations`). Los hashes antiguos siguen funcionando y se **reemplazan por uno más fuerte en el
+siguiente login correcto** (sin cerrar sesiones). Un hash corrupto en la base rechaza el login, no lo rompe.
+
+**Registro de eventos de seguridad** (`security_events`): `login_success`, `login_failed` (con motivo), `account_locked`, `password_changed`, `password_change_failed`,
+`refresh_token_reuse`, `logout`, con IP y navegador. Nunca contiene contraseñas ni el nombre de usuario que se tecleó. La API puede **añadir** eventos pero no leerlos ni
+borrarlos; si el registro falla, el login sigue.
+
+**Borde de la API.**
+- Cabeceras defensivas en toda respuesta (`nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, CSP `default-src 'none'`, `Cache-Control: no-store`), HSTS fuera de desarrollo y sin cabecera `Server`.
+- **Detrás de un proxy hay que declararlo:** `Proxy:KnownProxies` (IPs) y/o `Proxy:KnownNetworks` (CIDR). Solo entonces se creen `X-Forwarded-For/Proto/Host`; si no, un atacante podría
+  falsear su IP (saltarse el límite) o el host (hacerse pasar por otro gimnasio). Valores inválidos impiden arrancar.
+- `Security:RequireHttps` redirige HTTP→HTTPS (308). Actívalo solo con el proxy declarado, o provocará un bucle.
+- Límite de tamaño de cuerpo (`Security:MaxBodyBytes`, 1 MB) y de peticiones: por usuario autenticado (600/min) o, sin sesión, por IP (120/min); `/health` nunca se limita.
+- CORS solo para los orígenes de `Cors:AllowedOrigins`; sin comodines.
+
+**Reglas de oro:** nunca subas secretos (claves JWT/cifrado, cadenas con contraseña, certificados, `.env`); las claves de desarrollo viven en user-secrets (`scripts/dev-secrets.sh`).
+Para reportar una vulnerabilidad, abre un aviso privado de seguridad en GitHub (Security → Report a vulnerability) en lugar de un issue público.

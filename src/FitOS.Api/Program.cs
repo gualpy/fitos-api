@@ -2,8 +2,10 @@ using System.Text;
 using System.Threading.RateLimiting;
 using FitOS.Api;
 using FitOS.Api.Auth;
+using FitOS.Api.Attendance;
 using FitOS.Api.Members;
 using FitOS.Api.Platform;
+using FitOS.Api.Security;
 using FitOS.Api.Tenancy;
 using FitOS.Infrastructure;
 using FitOS.Infrastructure.Auth;
@@ -12,6 +14,20 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var security = SecurityOptions.From(builder.Configuration);
+builder.Services.AddSingleton(security);
+var trustsProxy = builder.ConfigureForwardedHeaders();
+builder.WebHost.ConfigureKestrel(kestrel =>
+{
+    kestrel.AddServerHeader = false;
+    kestrel.Limits.MaxRequestBodySize = security.MaxBodyBytes;
+});
+builder.Services.AddHsts(hsts =>
+{
+    hsts.MaxAge = TimeSpan.FromDays(365);
+    hsts.IncludeSubDomains = true;
+});
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -72,6 +88,7 @@ builder.Services.AddAuthorization(AuthPolicies.Configure);
 builder.Services.AddRateLimiter(limiter =>
 {
     limiter.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    limiter.AddEdgeRateLimiting(security);
     limiter.AddPolicy(AuthEndpoints.LoginRateLimitPolicy, httpContext =>
     {
         var limit = httpContext.RequestServices.GetRequiredService<IOptions<AuthOptions>>().Value.LoginRequestsPerMinute;
@@ -89,16 +106,33 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
+if (trustsProxy)
+{
+    app.UseForwardedHeaders(); // first: everything below must see the real client IP, scheme and host
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+app.UseMiddleware<SecurityHeadersMiddleware>();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts(); // only ever sent over HTTPS
+}
+
+if (security.RequireHttps)
+{
+    app.UseMiddleware<HttpsRedirectMiddleware>();
+}
+
 app.UseExceptionHandler();
+app.UseMiddleware<RequestSizeLimitMiddleware>();
 app.UseCors();
+app.UseAuthentication(); // before the rate limiter, so signed-in users are counted per user and not per IP
 app.UseRateLimiter();
-app.UseAuthentication();
 app.UseMiddleware<TenantMiddleware>();
 app.UseAuthorization();
 
@@ -106,6 +140,7 @@ app.MapHealthChecks("/health").AllowAnonymous();
 app.MapAuth();
 app.MapPlatform();
 app.MapMembers();
+app.MapAttendance();
 
 app.Run();
 

@@ -16,6 +16,8 @@ internal sealed class FixedTenant(Guid? id) : ITenantContext
 
 internal sealed class FixedClock(DateOnly today) : ITenantClock
 {
+    public Task<TimeZoneInfo> ZoneAsync(CancellationToken cancellationToken) => Task.FromResult(TimeZoneInfo.Utc);
+
     public Task<DateOnly> TodayAsync(CancellationToken cancellationToken) => Task.FromResult(today);
 }
 
@@ -48,6 +50,10 @@ internal sealed class MemoryCustomers : ICustomerRepository
 
     public Task<Customer?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Items.FirstOrDefault(c => c.Id == id));
 
+    public Task<Customer?> GetByClientCodeAsync(long clientCode, CancellationToken cancellationToken) => Task.FromResult(Items.FirstOrDefault(c => c.ClientCode == clientCode));
+
+    public Task<Customer?> GetByRfidCardAsync(string rfidCard, CancellationToken cancellationToken) => Task.FromResult(Items.FirstOrDefault(c => c.RfidCard == rfidCard));
+
     public void Add(Customer customer) => Items.Add(customer);
 
     public Task SaveAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -67,6 +73,9 @@ internal sealed class MemoryMemberships : IMembershipRepository
         Task.FromResult(Items.Where(m => m.CustomerId == customerId && m.Status != MembershipStatus.Cancelled).Select(m => (DateOnly?)m.EndsOn).Max());
 
     public Task<Membership?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(Items.FirstOrDefault(m => m.Id == id));
+
+    public Task<bool> HasCurrentAsync(Guid customerId, DateOnly today, CancellationToken cancellationToken) =>
+        Task.FromResult(Items.Any(m => m.CustomerId == customerId && m.Status == MembershipStatus.Active && m.StartsOn <= today && m.EndsOn >= today));
 
     public void Add(Membership membership) => Items.Add(membership);
 
@@ -304,6 +313,10 @@ public sealed class CustomerServiceTests
         }
 
         public Task<Customer?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<Customer?>(null);
+
+        public Task<Customer?> GetByClientCodeAsync(long clientCode, CancellationToken cancellationToken) => Task.FromResult<Customer?>(null);
+
+        public Task<Customer?> GetByRfidCardAsync(string rfidCard, CancellationToken cancellationToken) => Task.FromResult<Customer?>(null);
 
         public void Add(Customer customer)
         {

@@ -32,7 +32,7 @@ public sealed class TokenAndPasswordTests
     public void Token_carries_tenant_role_and_name_and_expires_when_configured()
     {
         var tenant = Guid.NewGuid();
-        var issued = Issuer(minutes: 30).Issue(Record(tenant));
+        var issued = Issuer(minutes: 30).Issue(Record(tenant), Guid.NewGuid());
 
         var jwt = Read(issued);
 
@@ -46,9 +46,19 @@ public sealed class TokenAndPasswordTests
     }
 
     [Fact]
+    public void Token_names_its_session_so_logout_can_revoke_exactly_that_one()
+    {
+        var session = Guid.NewGuid();
+
+        var jwt = Read(Issuer().Issue(Record(Guid.NewGuid()), session));
+
+        Assert.Equal(session.ToString(), jwt.Claims.Single(c => c.Type == "sid").Value);
+    }
+
+    [Fact]
     public void Platform_admin_token_has_no_tenant_claim()
     {
-        var jwt = Read(Issuer().Issue(Record(tenantId: null, UserRole.PlatformAdmin)));
+        var jwt = Read(Issuer().Issue(Record(tenantId: null, UserRole.PlatformAdmin), Guid.NewGuid()));
 
         Assert.DoesNotContain(jwt.Claims, c => c.Type == "tenant_id");
         Assert.Equal("platform_admin", jwt.Claims.Single(c => c.Type == "role").Value);
@@ -59,7 +69,7 @@ public sealed class TokenAndPasswordTests
     {
         var customer = Guid.NewGuid();
 
-        var jwt = Read(Issuer().Issue(Record(Guid.NewGuid(), UserRole.Customer, customer)));
+        var jwt = Read(Issuer().Issue(Record(Guid.NewGuid(), UserRole.Customer, customer), Guid.NewGuid()));
 
         Assert.Equal(customer.ToString(), jwt.Claims.Single(c => c.Type == "customer_id").Value);
     }
@@ -67,7 +77,7 @@ public sealed class TokenAndPasswordTests
     [Fact]
     public void Token_never_contains_the_password_hash()
     {
-        var issued = Issuer().Issue(Record(Guid.NewGuid()));
+        var issued = Issuer().Issue(Record(Guid.NewGuid()), Guid.NewGuid());
 
         Assert.DoesNotContain("secret-hash", issued.Value);
         Assert.DoesNotContain("secret-hash", Read(issued).Payload.SerializeToJson());
@@ -76,7 +86,7 @@ public sealed class TokenAndPasswordTests
     [Fact]
     public void Token_is_signed_with_the_configured_key_only()
     {
-        var issued = Issuer().Issue(Record(Guid.NewGuid()));
+        var issued = Issuer().Issue(Record(Guid.NewGuid()), Guid.NewGuid());
         var handler = new JwtSecurityTokenHandler();
         TokenValidationParameters Parameters(string key) => new()
         {

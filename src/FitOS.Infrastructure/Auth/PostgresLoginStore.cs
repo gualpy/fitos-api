@@ -34,11 +34,17 @@ public sealed class PostgresLoginStore(FitOsDbContext db) : ILoginStore
             row.MustChangePassword);
     }
 
-    public async Task RegisterFailureAsync(Guid userId, int maxFailures, TimeSpan lockout, CancellationToken cancellationToken)
+    public async Task<bool> RegisterFailureAsync(Guid userId, int maxFailures, TimeSpan lockout, CancellationToken cancellationToken)
     {
         var minutes = (int)Math.Ceiling(lockout.TotalMinutes);
-        await db.Database.ExecuteSqlAsync($"SELECT auth_register_failure({userId}, {maxFailures}, {minutes})", cancellationToken);
+        var result = await db.Database
+            .SqlQuery<bool>($"SELECT auth_register_failure({userId}, {maxFailures}, {minutes}) AS \"Value\"")
+            .ToListAsync(cancellationToken);
+        return result.FirstOrDefault();
     }
+
+    public async Task UpgradePasswordHashAsync(Guid userId, string newHash, CancellationToken cancellationToken) =>
+        await db.Database.ExecuteSqlAsync($"SELECT auth_rehash_password({userId}, {newHash})", cancellationToken);
 
     public async Task RegisterSuccessAsync(Guid userId, CancellationToken cancellationToken) =>
         await db.Database.ExecuteSqlAsync($"SELECT auth_register_success({userId})", cancellationToken);

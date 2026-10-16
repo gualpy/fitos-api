@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FitOS.Api.Tenancy;
 using FitOS.Application.Auth;
+using FitOS.Infrastructure.Auth;
 using Microsoft.AspNetCore.Authorization;
 using FitOS.Domain.Tenancy;
 
@@ -16,6 +17,8 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/auth");
         group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        group.MapPost("/refresh", RefreshAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        group.MapPost("/logout", LogoutAsync).RequireAuthorization(AuthPolicies.Authenticated);
         group.MapGet("/me", Me).RequireAuthorization(AuthPolicies.Authenticated);
         group.MapPost("/change-password", ChangePasswordAsync)
             .RequireAuthorization(AuthPolicies.Authenticated)
@@ -46,6 +49,7 @@ public static class AuthEndpoints
             target.Kind == TenantTargetKind.Tenant ? target.Slug : null,
             request.Username.Trim(),
             request.Password,
+            ClientOf(http),
             cancellationToken);
 
         if (!result.Succeeded)
@@ -53,16 +57,52 @@ public static class AuthEndpoints
             return Error(StatusCodes.Status401Unauthorized, "invalid_credentials", "Invalid username or password.");
         }
 
-        return Results.Ok(new LoginResponse(
-            result.Token!.Value,
-            "Bearer",
-            result.Token.ExpiresAt,
-            new UserSummary(result.User!.Id, result.User.TenantId, result.User.DisplayName, result.User.Role.ToWire(), result.User.MustChangePassword, result.User.CustomerId)));
+        return Results.Ok(ToResponse(result));
     }
+
+    private static async Task<IResult> RefreshAsync(RefreshRequest request, HttpContext http, SessionService sessions, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken) || request.RefreshToken.Length > 200)
+        {
+            return Error(StatusCodes.Status400BadRequest, "validation_failed", "refreshToken is required.");
+        }
+
+        var result = await sessions.RefreshAsync(request.RefreshToken, ClientOf(http), cancellationToken);
+        if (result.Succeeded)
+        {
+            return Results.Ok(ToResponse(result.Login!));
+        }
+
+        // Two requests at once from the same client: ask it to retry with the token it just received.
+        // Every other failure looks the same: it never reveals whether the token existed, expired or was stolen.
+        return result.Status == RefreshStatus.Concurrent
+            ? Error(StatusCodes.Status409Conflict, "refresh_in_progress", "The session is being renewed; retry in a moment.")
+            : Error(StatusCodes.Status401Unauthorized, "invalid_refresh_token", "The session is no longer valid. Sign in again.");
+    }
+
+    private static async Task<IResult> LogoutAsync(ClaimsPrincipal user, HttpContext http, SessionService sessions, CancellationToken cancellationToken)
+    {
+        if (Guid.TryParse(user.FindFirstValue(JwtAccessTokenIssuer.SessionClaim), out var sessionId))
+        {
+            Guid? userId = Guid.TryParse(user.FindFirstValue("sub"), out var parsed) ? parsed : null;
+            await sessions.LogoutAsync(sessionId, userId, ClientOf(http), cancellationToken);
+        }
+
+        return Results.NoContent();
+    }
+
+    private static LoginResponse ToResponse(LoginResult result) => new(
+        result.Token!.Value,
+        "Bearer",
+        result.Token.ExpiresAt,
+        result.Refresh!.Token,
+        result.Refresh.ExpiresAt,
+        new UserSummary(result.User!.Id, result.User.TenantId, result.User.DisplayName, result.User.Role.ToWire(), result.User.MustChangePassword, result.User.CustomerId));
 
     private static async Task<IResult> ChangePasswordAsync(
         ChangePasswordRequest request,
         ClaimsPrincipal user,
+        HttpContext http,
         ChangePasswordService service,
         CancellationToken cancellationToken)
     {
@@ -73,7 +113,7 @@ public static class AuthEndpoints
             return Error(StatusCodes.Status400BadRequest, "validation_failed", "Current and new password are required.");
         }
 
-        return await service.ChangeAsync(userId, request.CurrentPassword, request.NewPassword, cancellationToken) switch
+        return await service.ChangeAsync(userId, request.CurrentPassword, request.NewPassword, ClientOf(http), cancellationToken) switch
         {
             ChangePasswordOutcome.Changed => Results.NoContent(), // existing tokens stay valid until they expire; log in again
             ChangePasswordOutcome.WrongCurrentPassword => Error(StatusCodes.Status400BadRequest, "invalid_current_password", "The current password is incorrect."),
@@ -94,6 +134,10 @@ public static class AuthEndpoints
         name = user.FindFirstValue("name"),
     });
 
+    /// <summary>The real client address (after trusted-proxy processing) and browser, for the security log only.</summary>
+    private static ClientInfo ClientOf(HttpContext http) =>
+        new(http.Connection.RemoteIpAddress?.ToString(), http.Request.Headers.UserAgent.ToString());
+
     private static IResult Error(int status, string code, string message) =>
         Results.Json(new { error = new { code, message } }, statusCode: status);
 
@@ -103,5 +147,7 @@ public static class AuthEndpoints
 
     public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
 
-    public sealed record LoginResponse(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, UserSummary User);
+    public sealed record LoginResponse(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, string RefreshToken, DateTimeOffset RefreshExpiresAt, UserSummary User);
+
+    public sealed record RefreshRequest(string? RefreshToken);
 }

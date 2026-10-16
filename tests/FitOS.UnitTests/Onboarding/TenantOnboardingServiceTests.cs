@@ -33,6 +33,8 @@ public sealed class TenantOnboardingServiceTests
 
         public bool Verify(string hash, string password) => true;
 
+        public PasswordCheck Check(string hash, string password) => PasswordCheck.Success;
+
         public void VerifyDummy(string password)
         {
         }

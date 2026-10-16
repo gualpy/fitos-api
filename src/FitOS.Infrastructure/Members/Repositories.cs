@@ -102,6 +102,12 @@ public sealed class CustomerRepository(FitOsDbContext db) : ICustomerRepository
     public Task<Customer?> GetAsync(Guid id, CancellationToken cancellationToken) =>
         db.Customers.FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
 
+    public Task<Customer?> GetByClientCodeAsync(long clientCode, CancellationToken cancellationToken) =>
+        db.Customers.FirstOrDefaultAsync(c => c.ClientCode == clientCode, cancellationToken);
+
+    public Task<Customer?> GetByRfidCardAsync(string rfidCard, CancellationToken cancellationToken) =>
+        db.Customers.FirstOrDefaultAsync(c => c.RfidCard == rfidCard, cancellationToken);
+
     public void Add(Customer customer) => db.Customers.Add(customer);
 
     public Task SaveAsync(CancellationToken cancellationToken) => SaveHelper.SaveAsync(db, Constraints, cancellationToken);
@@ -134,45 +140,12 @@ public sealed class MembershipRepository(FitOsDbContext db) : IMembershipReposit
     public Task<Membership?> GetAsync(Guid id, CancellationToken cancellationToken) =>
         db.Memberships.FirstOrDefaultAsync(m => m.Id == id, cancellationToken);
 
+    public Task<bool> HasCurrentAsync(Guid customerId, DateOnly today, CancellationToken cancellationToken) =>
+        db.Memberships.AnyAsync(
+            m => m.CustomerId == customerId && m.Status == MembershipStatus.Active && m.StartsOn <= today && m.EndsOn >= today,
+            cancellationToken);
+
     public void Add(Membership membership) => db.Memberships.Add(membership);
 
     public Task SaveAsync(CancellationToken cancellationToken) => SaveHelper.SaveAsync(db, Constraints, cancellationToken);
-}
-
-/// <summary>Today in the tenant's own time zone (tenant_settings.timezone), cached for the request.</summary>
-public sealed class TenantClock(FitOsDbContext db, TimeProvider time) : ITenantClock
-{
-    private const string DefaultZone = "America/Guayaquil";
-
-    private TimeZoneInfo? _zone;
-
-    public async Task<DateOnly> TodayAsync(CancellationToken cancellationToken)
-    {
-        _zone ??= await LoadZoneAsync(cancellationToken);
-        return DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(time.GetUtcNow(), _zone).DateTime);
-    }
-
-    private async Task<TimeZoneInfo> LoadZoneAsync(CancellationToken cancellationToken)
-    {
-        var zones = await db.Database
-            .SqlQuery<string>($"SELECT timezone AS \"Value\" FROM tenant_settings")
-            .ToListAsync(cancellationToken);
-
-        return Find(zones.FirstOrDefault() ?? DefaultZone) ?? Find(DefaultZone) ?? Ecuador;
-    }
-
-    // Mainland Ecuador is UTC-5 all year (no DST): a safe fallback where the OS has no tz database (minimal containers).
-    private static readonly TimeZoneInfo Ecuador = TimeZoneInfo.CreateCustomTimeZone("EC", TimeSpan.FromHours(-5), "Ecuador", "Ecuador");
-
-    private static TimeZoneInfo? Find(string id)
-    {
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(id);
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            return null;
-        }
-    }
 }

@@ -1,10 +1,12 @@
 using FitOS.Application.Abstractions;
 using FitOS.Application.Auth;
+using FitOS.Application.Attendance;
 using FitOS.Application.Common;
 using FitOS.Application.Customers;
 using FitOS.Application.Memberships;
 using FitOS.Application.Onboarding;
 using FitOS.Application.Plans;
+using FitOS.Infrastructure.Attendance;
 using FitOS.Infrastructure.Members;
 using FitOS.Application.Secrets;
 using FitOS.Infrastructure.Onboarding;
@@ -63,7 +65,8 @@ public static class DependencyInjection
         services.AddOptions<AuthOptions>().Bind(configuration.GetSection(AuthOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
 
         services.AddSingleton(TimeProvider.System);
-        services.AddSingleton<IPasswordService, IdentityPasswordService>();
+        services.AddSingleton<IPasswordService>(sp => new IdentityPasswordService(sp.GetRequiredService<IOptions<AuthOptions>>().Value.PasswordIterations));
+        services.AddScoped<ISecurityLog, PostgresSecurityLog>();
         services.AddSingleton<IAccessTokenIssuer, JwtAccessTokenIssuer>();
         services.AddScoped<ILoginStore, PostgresLoginStore>();
         services.AddSingleton(sp =>
@@ -71,6 +74,8 @@ public static class DependencyInjection
             var auth = sp.GetRequiredService<IOptions<AuthOptions>>().Value;
             return new LoginPolicy(auth.MaxFailedAttempts, TimeSpan.FromMinutes(auth.LockoutMinutes));
         });
+        services.AddScoped<ISessionStore, PostgresSessionStore>();
+        services.AddScoped<SessionService>();
         services.AddScoped<LoginService>();
         services.AddScoped<IPasswordStore, PostgresPasswordStore>();
         services.AddScoped<ChangePasswordService>();
@@ -82,13 +87,19 @@ public static class DependencyInjection
         services.AddScoped<ITenantFiscalAccountStore, PostgresTenantFiscalAccountStore>();
         services.AddScoped<FiscalConnectionService>();
 
+        services.AddScoped<TenantSettingsReader>();
         services.AddScoped<ITenantClock, TenantClock>();
+        services.AddScoped<ITenantSettings, TenantSettings>();
         services.AddScoped<IPlanRepository, PlanRepository>();
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<IMembershipRepository, MembershipRepository>();
         services.AddScoped<PlanService>();
         services.AddScoped<CustomerService>();
         services.AddScoped<MembershipService>();
+        services.AddScoped<IAttendanceRepository, AttendanceRepository>();
+        services.AddScoped<IBranchRepository, BranchRepository>();
+        services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
+        services.AddScoped<AttendanceService>();
 
         return services;
     }

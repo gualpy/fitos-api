@@ -1,3 +1,4 @@
+using FitOS.Domain.Attendance;
 using FitOS.Domain.Customers;
 using FitOS.Domain.Memberships;
 using FitOS.Domain.Plans;
@@ -20,9 +21,12 @@ public sealed class FitOsDbContext(DbContextOptions<FitOsDbContext> options) : D
 
     public DbSet<Membership> Memberships => Set<Membership>();
 
+    public DbSet<AttendanceEntry> Attendance => Set<AttendanceEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        MapAttendance(modelBuilder);
 
         modelBuilder.Entity<Customer>(b =>
         {
@@ -75,6 +79,23 @@ public sealed class FitOsDbContext(DbContextOptions<FitOsDbContext> options) : D
             b.Property(x => x.CreatedAt).HasColumnName("created_at").ValueGeneratedOnAdd();
         });
     }
+
+    private static void MapAttendance(ModelBuilder modelBuilder) =>
+        modelBuilder.Entity<AttendanceEntry>(b =>
+        {
+            b.ToTable("attendance");
+            b.HasKey(x => x.Id);
+            Id(b.Property(x => x.Id), "id");
+            b.Property(x => x.TenantId).HasColumnName("tenant_id");
+            b.Property(x => x.BranchId).HasColumnName("branch_id");
+            b.Property(x => x.CustomerId).HasColumnName("customer_id");
+            b.Property(x => x.DeviceId).HasColumnName("device_id");
+            b.Property(x => x.CheckIn).HasColumnName("check_in");
+            b.Property(x => x.CheckOut).HasColumnName("check_out");
+            b.Property(x => x.Result).HasColumnName("result").HasConversion(LowerEnum<AttendanceResult>());
+            b.Property(x => x.DenyReason).HasColumnName("deny_reason");
+            b.Property(x => x.AutoClosedAt).HasColumnName("auto_closed_at");
+        });
 
     private static void Id(PropertyBuilder<Guid> property, string column) =>
         property.HasColumnName(column).ValueGeneratedNever();

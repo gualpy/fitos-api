@@ -144,21 +144,9 @@ public static class MembersEndpoints
 
     // ---- helpers --------------------------------------------------------------------------------------------
 
-    private static bool IsCustomer(ClaimsPrincipal user) => user.FindFirstValue("role") == "customer";
+    private static bool IsCustomer(ClaimsPrincipal user) => CustomerAccess.IsCustomer(user);
 
-    /// <summary>A customer may only read their own record. Anyone else's id looks like a missing one.</summary>
-    private static void EnsureCanSee(ClaimsPrincipal user, Guid customerId)
-    {
-        if (!IsCustomer(user))
-        {
-            return;
-        }
-
-        if (!Guid.TryParse(user.FindFirstValue("customer_id"), out var own) || own != customerId)
-        {
-            throw new NotFoundException("customer");
-        }
-    }
+    private static void EnsureCanSee(ClaimsPrincipal user, Guid customerId) => CustomerAccess.EnsureCanSee(user, customerId);
 
     private static PlanInput ToInput(PlanRequest r) => new(r.Name, r.Description, r.Price, r.IvaRate, r.DurationMonths, r.IsPromotion);
 

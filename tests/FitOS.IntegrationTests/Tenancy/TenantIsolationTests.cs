@@ -112,6 +112,32 @@ public sealed class PostgresFixture : IAsyncLifetime
         return await cmd.ExecuteScalarAsync();
     }
 
+    public async Task<List<object?[]>> RowsAsync(string sql, params (string Name, object? Value)[] parameters)
+    {
+        await using var conn = new NpgsqlConnection(OwnerConnection);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        foreach (var (name, value) in parameters)
+        {
+            cmd.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        }
+
+        var rows = new List<object?[]>();
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var row = new object?[reader.FieldCount];
+            for (var i = 0; i < row.Length; i++)
+            {
+                row[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            }
+
+            rows.Add(row);
+        }
+
+        return rows;
+    }
+
     private static async Task Exec(string connection, string sql)
     {
         await using var conn = new NpgsqlConnection(connection);

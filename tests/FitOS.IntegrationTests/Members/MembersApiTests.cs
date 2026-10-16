@@ -446,7 +446,7 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         {
             var gym = await NewGym(timezone);
             await using var context = db.Context(gym.TenantId);
-            return await new TenantClock(context, new FixedTime(instant)).TodayAsync(CancellationToken.None);
+            return await new TenantClock(new TenantSettingsReader(context), new FixedTime(instant)).TodayAsync(CancellationToken.None);
         }
 
         Assert.Equal(new DateOnly(2026, 10, 16), await TodayFor("America/Guayaquil"));

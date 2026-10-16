@@ -28,6 +28,10 @@ public interface ICustomerRepository
 
     Task<Customer?> GetAsync(Guid id, CancellationToken cancellationToken);
 
+    Task<Customer?> GetByClientCodeAsync(long clientCode, CancellationToken cancellationToken);
+
+    Task<Customer?> GetByRfidCardAsync(string rfidCard, CancellationToken cancellationToken);
+
     void Add(Customer customer);
 
     /// <exception cref="ConflictException"><c>identification_taken</c> or <c>rfid_card_taken</c></exception>

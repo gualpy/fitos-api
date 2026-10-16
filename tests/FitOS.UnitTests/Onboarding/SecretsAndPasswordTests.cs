@@ -84,15 +84,33 @@ public sealed class ChangePasswordServiceTests
 
         public bool Verify(string hash, string password) => hash == "h:" + password;
 
+        public PasswordCheck Check(string hash, string password) => Verify(hash, password) ? PasswordCheck.Success : PasswordCheck.Failed;
+
         public void VerifyDummy(string password)
         {
         }
     }
 
-    private static (ChangePasswordService Service, Store Store) Create(string? hash = "h:Temp-Password-1")
+    private sealed class Log : ISecurityLog
+    {
+        public List<SecurityEvent> Events { get; } = [];
+
+        public Task WriteAsync(SecurityEvent securityEvent, CancellationToken cancellationToken)
+        {
+            Events.Add(securityEvent);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static readonly ClientInfo Client = new("203.0.113.5", "test-agent");
+
+    private static (ChangePasswordService Service, Store Store) Create(string? hash = "h:Temp-Password-1") => Create(hash, out _);
+
+    private static (ChangePasswordService Service, Store Store) Create(string? hash, out Log log)
     {
         var store = new Store(hash);
-        return (new ChangePasswordService(store, new Passwords()), store);
+        log = new Log();
+        return (new ChangePasswordService(store, new Passwords(), log), store);
     }
 
     [Fact]
@@ -100,7 +118,7 @@ public sealed class ChangePasswordServiceTests
     {
         var (service, store) = Create();
 
-        var outcome = await service.ChangeAsync(Guid.NewGuid(), "Temp-Password-1", "Brand-New-Pass-9", CancellationToken.None);
+        var outcome = await service.ChangeAsync(Guid.NewGuid(), "Temp-Password-1", "Brand-New-Pass-9", Client, CancellationToken.None);
 
         Assert.Equal(ChangePasswordOutcome.Changed, outcome);
         Assert.Equal("h:Brand-New-Pass-9", store.Saved);
@@ -111,7 +129,7 @@ public sealed class ChangePasswordServiceTests
     {
         var (service, store) = Create();
 
-        Assert.Equal(ChangePasswordOutcome.WrongCurrentPassword, await service.ChangeAsync(Guid.NewGuid(), "nope", "Brand-New-Pass-9", CancellationToken.None));
+        Assert.Equal(ChangePasswordOutcome.WrongCurrentPassword, await service.ChangeAsync(Guid.NewGuid(), "nope", "Brand-New-Pass-9", Client, CancellationToken.None));
         Assert.Null(store.Saved);
     }
 
@@ -120,7 +138,7 @@ public sealed class ChangePasswordServiceTests
     {
         var (service, store) = Create(hash: null);
 
-        Assert.Equal(ChangePasswordOutcome.WrongCurrentPassword, await service.ChangeAsync(Guid.NewGuid(), "x", "Brand-New-Pass-9", CancellationToken.None));
+        Assert.Equal(ChangePasswordOutcome.WrongCurrentPassword, await service.ChangeAsync(Guid.NewGuid(), "x", "Brand-New-Pass-9", Client, CancellationToken.None));
         Assert.Null(store.Saved);
     }
 
@@ -133,8 +151,22 @@ public sealed class ChangePasswordServiceTests
     {
         var (service, store) = Create();
 
-        Assert.Equal(ChangePasswordOutcome.WeakPassword, await service.ChangeAsync(Guid.NewGuid(), "Temp-Password-1", newPassword, CancellationToken.None));
+        Assert.Equal(ChangePasswordOutcome.WeakPassword, await service.ChangeAsync(Guid.NewGuid(), "Temp-Password-1", newPassword, Client, CancellationToken.None));
         Assert.Null(store.Saved);
+    }
+
+    [Fact]
+    public async Task A_change_is_logged_and_a_wrong_current_password_too_but_a_weak_one_is_not()
+    {
+        var (service, _) = Create(hash: "h:Temp-Password-1", out var log);
+
+        await service.ChangeAsync(Guid.NewGuid(), "nope", "Brand-New-Pass-9", Client, CancellationToken.None);
+        await service.ChangeAsync(Guid.NewGuid(), "Temp-Password-1", "short", Client, CancellationToken.None);
+        await service.ChangeAsync(Guid.NewGuid(), "Temp-Password-1", "Brand-New-Pass-9", Client, CancellationToken.None);
+
+        Assert.Equal(["password_change_failed", "password_changed"], log.Events.Select(e => e.Name).ToArray());
+        Assert.All(log.Events, e => Assert.Equal(Client, e.Client));
+        Assert.DoesNotContain("Brand-New-Pass-9", System.Text.Json.JsonSerializer.Serialize(log.Events), StringComparison.Ordinal);
     }
 
     [Fact]
