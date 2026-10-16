@@ -1,0 +1,3 @@
+[*.cs]
+# Readable snake_case test names are the convention here.
+dotnet_diagnostic.CA1707.severity = none

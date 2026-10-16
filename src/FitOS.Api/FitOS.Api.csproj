@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\FitOS.Application\FitOS.Application.csproj" />
+    <ProjectReference Include="..\FitOS.Infrastructure\FitOS.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.11" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <UserSecretsId>ec02652e-760c-4f3e-b127-cf093099f2a6</UserSecretsId>
+  </PropertyGroup>
+
+</Project>

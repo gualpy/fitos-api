@@ -1,0 +1,96 @@
+# FitOS API (.NET 8)
+
+Backend multi-tenant de FitOS. La facturación electrónica se delega a un servicio externo (SICOFAC) por API.
+
+```
+src/
+  FitOS.Domain          Enums y reglas puras. Sin dependencias.
+  FitOS.Application     Casos de uso y puertos (ITenantContext, IFiscalProvider). Depende de Domain.
+  FitOS.Infrastructure  EF Core/Npgsql, RLS por tenant, cliente SICOFAC (HttpClient + resiliencia).
+  FitOS.Api             ASP.NET Core: JWT, middleware de tenant, endpoints. Compone todo.
+  FitOS.Migrator        Aplica los scripts SQL (DbUp). Dueño del esquema.
+tests/
+  FitOS.UnitTests         Sin I/O (proveedor SICOFAC con handler falso, mapeos).
+  FitOS.IntegrationTests  API en memoria + PostgreSQL real (RLS) si hay FITOS_TEST_PG.
+```
+Dependencias: Api → Application, Infrastructure · Infrastructure → Application → Domain.
+
+## Decisiones
+- **Esquema SQL-first** (`src/FitOS.Migrator/Scripts/NNNN_*.sql`), no migraciones de EF: RLS, triggers y FKs
+  compuestas por tenant viven en SQL. Un script por cambio, inmutable una vez aplicado.
+- **Dos roles de BD:** el migrador corre como dueño; la API como `fitos_app` (sin BYPASSRLS). Jamás conectar la API como dueño.
+- **Tenant** sale solo del claim `tenant_id` del JWT validado (`TenantMiddleware`). Sin tenant → 0 filas.
+- **SICOFAC:** `IFiscalProvider`; la API key y el `company_id` de cada gimnasio se pasan por llamada (`FiscalAccount`).
+  Reintentos del HTTP son seguros por `Idempotency-Key`.
+
+## Comandos
+```bash
+docker compose up -d db
+export POSTGRES_PASSWORD="$(openssl rand -base64 18)"            # y úsala en las cadenas de conexión
+export FITOS_MIGRATE_CONNECTION="Host=localhost;Username=postgres;Password=$POSTGRES_PASSWORD;Database=fitos"
+dotnet run --project src/FitOS.Migrator -- migrate
+dotnet run --project src/FitOS.Migrator -- create-platform-admin <usuario> "Nombre"   # contraseña temporal (FITOS_ADMIN_PASSWORD o aleatoria, se muestra una vez)
+psql ... -c "ALTER ROLE fitos_app LOGIN PASSWORD '...'"      # contraseña real, fuera del repo
+./scripts/dev-secrets.sh                                     # genera claves aleatorias de desarrollo en user-secrets (fuera del repo)
+# en producción, por variables de entorno / gestor de secretos: ConnectionStrings__Default, Jwt__SigningKey,
+# Secrets__EncryptionKey (openssl rand -base64 32), Sicofac__BaseUrl, Tenancy__BaseDomain
+dotnet run --project src/FitOS.Api
+
+dotnet test                                                  # unitarias + integración sin BD
+FITOS_TEST_PG="Host=localhost;Username=postgres;Password=$POSTGRES_PASSWORD;Database=postgres" dotnet test   # + pruebas de RLS
+```
+`FITOS_TEST_PG` debe ser un superusuario: cada corrida crea y borra su propia base temporal.
+
+## Login (hecho)
+`POST /auth/login {username, password}` → JWT de acceso (claims `sub`, `role`, `name`, `tenant_id`, `customer_id`). `GET /auth/me`.
+- **Tenant por host:** `titan.fitos.com` → gym `titan`; `fitos.com` o `admin.fitos.com` → administradores de plataforma.
+  En desarrollo se acepta la cabecera `X-Tenant-Slug` (`platform` para plataforma); la API se niega a arrancar con eso fuera de Development.
+- **Funciones SQL `SECURITY DEFINER`** (`0002_auth.sql`): el login ocurre antes de conocer el tenant y RLS ocultaría `users`,
+  así que la app solo puede ejecutar `auth_find_user / auth_register_*`, no leer `users`. Requiere que el rol de migraciones sea
+  superusuario o miembro de `fitos_platform`.
+- **Hash:** PBKDF2-HMAC-SHA512 con sal (hasher de ASP.NET Core Identity). Todas las fallas devuelven el mismo 401 tras trabajo comparable.
+- **Bloqueo:** 5 fallos → 15 min (configurable); una cuenta bloqueada ni siquiera se verifica. **Límite:** 10 intentos/min por IP.
+
+## Alta de gimnasios (hecho)
+Solo administradores de plataforma (`role=platform_admin`, sin `tenant_id`). Orden operativo:
+1. **En SICOFAC (manual):** crear la empresa y que su dueño genere la API key (SICOFAC no permite crear empresas por API).
+2. **En FitOS:** `POST /platform/tenants` con slug, RUC (validado: cédula/RUC ecuatoriano con dígito verificador), datos fiscales,
+   `providerCompanyId` + `providerApiKey` y el usuario del owner. Una sola transacción: tenant, ajustes, config fiscal,
+   sede Matriz (establecimiento 001), punto de emisión, owner y auditoría. Devuelve la **contraseña temporal una sola vez** (`Cache-Control: no-store`).
+3. `POST /platform/tenants/{id}/fiscal/test-connection`: consulta una referencia inexistente en SICOFAC; `ok` = la key sirve para esa empresa
+   (no crea nada). Otros estados: `invalid_api_key`, `wrong_company`, `company_not_found`, `unreachable`, `not_configured`.
+- La API key se guarda **cifrada** (AES-256-GCM, ligada al tenant; `Secrets:EncryptionKey`) con una pista de 4 caracteres; la auditoría no lleva secretos.
+- RLS sigue activo: la transacción fija `app.tenant_id` al tenant NUEVO solo durante esa transacción.
+- Slug: formato DNS y sin reservados (`www`, `admin`, `api`, `platform`), también con un CHECK en la base. Conflictos: `slug_taken`, `ruc_taken` (409).
+- El owner (y los admins de plataforma creados por CLI) entran con contraseña temporal: hasta cambiarla con `POST /auth/change-password`
+  solo pueden usar `/auth/*` (claim `pwd_change`); el resto devuelve 403.
+
+## Clientes, planes y membresías (hecho)
+Todo va por el token: el gimnasio sale del claim `tenant_id`, nunca de la URL. Roles: `owner`/`admin` (gestión), `reception` (operación), `customer` (solo lo suyo).
+
+| Endpoint | Quién |
+|---|---|
+| `GET /plans`, `GET /plans/{id}` | cualquier miembro del gimnasio (el cliente solo ve planes activos) |
+| `POST /plans`, `PUT /plans/{id}`, `PUT /plans/{id}/active` | owner, admin |
+| `GET/POST /customers`, `PUT /customers/{id}` | owner, admin, reception |
+| `GET /customers/{id}` | staff, o el propio cliente |
+| `PUT /customers/{id}/status` | owner, admin |
+| `GET /customers/{id}/memberships` | staff, o el propio cliente |
+| `POST /customers/{id}/memberships` | owner, admin, reception |
+| `POST /memberships/{id}/cancel` | owner, admin |
+
+- `GET /customers?q=&status=&page=&pageSize=` busca por nombre, documento, correo o código; `%` y `_` se toman literales.
+- **Membresías sin solapamiento:** si el socio ya está cubierto, la nueva se programa justo después. Además lo garantiza la base (restricción de exclusión), incluso ante peticiones simultáneas.
+- Fechas de fin inclusivas y por meses de calendario (un mes que empieza el 31 termina antes: 31 oct → 29 nov). "Hoy" se calcula en la zona horaria del gimnasio.
+- Un id de otro gimnasio responde 404, igual que uno inexistente. Cédula/RUC se validan con dígito verificador.
+
+## Hoja de ruta
+- Listar, consultar y suspender gimnasios (panel de plataforma).
+- Ventas/POS e inventario → control de acceso → reportes; la venta de una membresía se enlazará con `memberships.sale_id`.
+- Facturación: worker de reintentos (outbox) y descarga/envío del comprobante.
+- Dockerfile (necesita `tzdata` para las zonas horarias) y CI.
+
+## Seguridad
+- **Nunca** subas secretos: claves JWT/cifrado, cadenas de conexión con contraseña, certificados (`.p12`, `.pem`) ni `.env`.
+  El `.gitignore` ya los excluye; las claves de desarrollo viven en user-secrets (`scripts/dev-secrets.sh`).
+- Para reportar una vulnerabilidad, abre un aviso privado de seguridad en GitHub (Security → Report a vulnerability) en lugar de un issue público.

@@ -1,0 +1,19 @@
+bin/
+obj/
+*.user
+.vs/
+.idea/
+appsettings.*.local.json
+secrets.json
+.env
+TestResults/
+
+# Secrets and certificates must never be committed
+.env*
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+secrets*.json
+appsettings.*.local.json
