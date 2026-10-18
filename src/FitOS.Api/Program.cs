@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using FitOS.Api;
 using FitOS.Api.Auth;
 using FitOS.Api.Attendance;
+using FitOS.Api.Dashboard;
 using FitOS.Api.Members;
 using FitOS.Api.Platform;
 using FitOS.Api.Security;
@@ -141,6 +142,7 @@ app.MapAuth();
 app.MapPlatform();
 app.MapMembers();
 app.MapAttendance();
+app.MapDashboard();
 
 app.Run();
 

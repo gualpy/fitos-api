@@ -281,6 +281,24 @@ public sealed class AttendanceApiTests(PostgresFixture db) : IClassFixture<Postg
     // ------------------------------------------------------------------------------------------ access and isolation
 
     [SkippableFact]
+    public async Task A_customers_own_history_can_be_filtered_by_result()
+    {
+        Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
+        var (gym, owner, reception) = await Staffed();
+        var mine = await Member(owner, reception, "Yo");
+        var now = DateTimeOffset.UtcNow;
+        await InsertEntry(gym, mine, now.AddHours(-3), now.AddHours(-2));
+        await InsertEntry(gym, mine, now.AddHours(-1), null, result: "denied", reason: "closed");
+        await SeedUser(gym, "yo", "customer", mine);
+        var me = await Login(gym.Slug, "yo");
+
+        Assert.Equal(2, (await Json(await me.GetAsync($"/customers/{mine}/attendance"))).GetProperty("total").GetInt32());
+        Assert.Equal(1, (await Json(await me.GetAsync($"/customers/{mine}/attendance?result=granted"))).GetProperty("total").GetInt32());
+        Assert.Equal(1, (await Json(await me.GetAsync($"/customers/{mine}/attendance?result=denied"))).GetProperty("total").GetInt32());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await me.GetAsync($"/customers/{mine}/attendance?result=maybe")).StatusCode);
+    }
+
+    [SkippableFact]
     public async Task A_customer_sees_only_their_own_history_and_cannot_scan_or_list_everyone()
     {
         Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");

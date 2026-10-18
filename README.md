@@ -90,12 +90,21 @@ Todo va por el token: el gimnasio sale del claim `tenant_id`, nunca de la URL. R
 | `POST /attendance/check-in` (`customerId` o `clientCode` o `rfidCard`; `branchId` si hay varias sedes) | owner, admin, reception |
 | `POST /attendance/check-out` | owner, admin, reception |
 | `GET /attendance?from=&to=&customerId=&result=&page=&pageSize=` | owner, admin, reception |
-| `GET /customers/{id}/attendance` | staff, o el propio socio |
+| `GET /customers/{id}/attendance?from=&to=&result=&page=&pageSize=` | staff, o el propio socio |
 
 - **Reglas de entrada** (`AccessPolicy`, función pura): socio inactivo → `customer_inactive`; día cerrado → `closed`; fuera de horario → `outside_hours` (abre incluido, cierra excluido); sin membresía vigente → `no_active_membership`, salvo que el gimnasio permita entrar sin plan (`tenant_settings.allow_without_plan`). Sin horarios configurados, la hora no restringe.
 - Toda lectura se **registra**, también las denegadas (con su motivo). Por eso `check-in` responde 201 en ambos casos; el campo `result` dice `granted` o `denied`.
 - **Una sola entrada abierta por socio**, garantizada por la base: una segunda lectura responde 409 `already_inside` (también si dos llegan a la vez). Una entrada olvidada de más de 24 h se cierra de forma visible (`autoClosed`, salida = entrada) para no inventar horas.
 - Fechas y horarios se interpretan en la zona horaria del gimnasio: un filtro `from`/`to` cubre días locales completos.
+
+## Dashboard (hecho)
+| Endpoint | Quién |
+|---|---|
+| `GET /dashboard/summary` | owner, admin, reception (reception **no** recibe cifras de dinero: `sales` viene `null`) |
+| `GET /dashboard/insights` | owner, admin |
+
+- **Resumen:** socios registrados, socios con plan vigente, planes que vencen en 7 días sin renovación agendada, asistencia de hoy (socios distintos), quiénes siguen dentro, socios activos por género, asistencia de los últimos 7 días y ventas pagadas (hoy y 7 días). Todo se calcula en SQL, con el calendario del gimnasio (no UTC) y bajo RLS: cada consulta ya queda dentro del gimnasio del token.
+- **Insights con IA** (opcional): la API llama a Gemini; la clave **solo existe en el servidor** (`Gemini:ApiKey`, por user-secrets o variable de entorno `Gemini__ApiKey`, nunca en el repositorio ni en el navegador). Sin clave responde 503 `insights_unavailable`; si el proveedor falla, 502 `insights_failed`. Al proveedor solo viajan **cifras agregadas** (sin nombres ni datos personales). La respuesta se guarda en memoria por gimnasio (`Gemini:CacheHours`, 6 por defecto) y es el usuario quien la pide con un botón.
 
 ## Siembra de desarrollo
 Datos de prueba **en la base**, nunca en el código de la app. Solo para bases de desarrollo (exige confirmación explícita):

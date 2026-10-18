@@ -1,6 +1,8 @@
 using FitOS.Application.Abstractions;
 using FitOS.Application.Auth;
 using FitOS.Application.Attendance;
+using FitOS.Application.Dashboard;
+using FitOS.Infrastructure.Dashboard;
 using FitOS.Application.Common;
 using FitOS.Application.Customers;
 using FitOS.Application.Memberships;
@@ -100,6 +102,21 @@ public static class DependencyInjection
         services.AddScoped<IBranchRepository, BranchRepository>();
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
         services.AddScoped<AttendanceService>();
+        services.AddScoped<IDashboardRepository, DashboardRepository>();
+        services.AddScoped<DashboardService>();
+        services.Configure<GeminiOptions>(configuration.GetSection("Gemini"));
+        services.AddSingleton<IInsightsCache, MemoryInsightsCache>();
+        services.AddHttpClient<IInsightsProvider, GeminiInsightsProvider>((sp, client) =>
+        {
+            var gemini = sp.GetRequiredService<IOptions<GeminiOptions>>().Value;
+            if (Uri.TryCreate(gemini.BaseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseAddress))
+            {
+                client.BaseAddress = baseAddress;
+            }
+
+            client.Timeout = TimeSpan.FromSeconds(Math.Max(gemini.TimeoutSeconds, 1));
+        });
+        services.AddScoped<InsightsService>();
 
         return services;
     }

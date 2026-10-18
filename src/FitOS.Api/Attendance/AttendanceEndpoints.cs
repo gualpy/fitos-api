@@ -36,10 +36,10 @@ public static class AttendanceEndpoints
         Results.Ok(ToPage(await service.ListAsync(new AttendanceFilter(from, to, customerId, ParseResult(result), page ?? 1, pageSize ?? 25), ct)));
 
     private static async Task<IResult> ListForCustomer(
-        Guid id, DateOnly? from, DateOnly? to, int? page, int? pageSize, ClaimsPrincipal user, AttendanceService service, CancellationToken ct)
+        Guid id, DateOnly? from, DateOnly? to, string? result, int? page, int? pageSize, ClaimsPrincipal user, AttendanceService service, CancellationToken ct)
     {
         CustomerAccess.EnsureCanSee(user, id);
-        return Results.Ok(ToPage(await service.ListForCustomerAsync(id, new AttendanceFilter(from, to, id, null, page ?? 1, pageSize ?? 25), ct)));
+        return Results.Ok(ToPage(await service.ListForCustomerAsync(id, new AttendanceFilter(from, to, id, ParseResult(result), page ?? 1, pageSize ?? 25), ct)));
     }
 
     private static AttendanceResult? ParseResult(string? value)
