@@ -6,6 +6,8 @@ using FitOS.Api.Attendance;
 using FitOS.Api.Dashboard;
 using FitOS.Api.Members;
 using FitOS.Api.Platform;
+using FitOS.Api.Products;
+using FitOS.Api.Sales;
 using FitOS.Api.Security;
 using FitOS.Api.Settings;
 using FitOS.Api.Tenancy;
@@ -145,6 +147,8 @@ app.MapMembers();
 app.MapAttendance();
 app.MapDashboard();
 app.MapSettings();
+app.MapProducts();
+app.MapSales();
 
 app.Run();
 

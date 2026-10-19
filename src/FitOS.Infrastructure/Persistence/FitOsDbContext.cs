@@ -2,6 +2,7 @@ using FitOS.Domain.Attendance;
 using FitOS.Domain.Customers;
 using FitOS.Domain.Memberships;
 using FitOS.Domain.Plans;
+using FitOS.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
@@ -18,6 +19,8 @@ public sealed class FitOsDbContext(DbContextOptions<FitOsDbContext> options) : D
     public DbSet<Customer> Customers => Set<Customer>();
 
     public DbSet<Plan> Plans => Set<Plan>();
+
+    public DbSet<Product> Products => Set<Product>();
 
     public DbSet<Membership> Memberships => Set<Membership>();
 
@@ -61,6 +64,22 @@ public sealed class FitOsDbContext(DbContextOptions<FitOsDbContext> options) : D
             b.Property(x => x.IvaRate).HasColumnName("iva_rate");
             b.Property(x => x.DurationMonths).HasColumnName("duration_months");
             b.Property(x => x.IsPromotion).HasColumnName("is_promotion");
+            b.Property(x => x.IsActive).HasColumnName("is_active");
+        });
+
+        modelBuilder.Entity<Product>(b =>
+        {
+            b.ToTable("products");
+            b.HasKey(x => x.Id);
+            Id(b.Property(x => x.Id), "id");
+            b.Property(x => x.TenantId).HasColumnName("tenant_id");
+            b.Property(x => x.Sku).HasColumnName("sku");
+            b.Property(x => x.Barcode).HasColumnName("barcode");
+            b.Property(x => x.Name).HasColumnName("name");
+            b.Property(x => x.Category).HasColumnName("category");
+            b.Property(x => x.Price).HasColumnName("price");
+            b.Property(x => x.IvaRate).HasColumnName("iva_rate");
+            b.Property(x => x.Stock).HasColumnName("stock");
             b.Property(x => x.IsActive).HasColumnName("is_active");
         });
 

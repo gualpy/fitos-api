@@ -8,7 +8,11 @@ using FitOS.Application.Customers;
 using FitOS.Application.Memberships;
 using FitOS.Application.Onboarding;
 using FitOS.Application.Plans;
+using FitOS.Application.Products;
+using FitOS.Application.Sales;
 using FitOS.Application.Settings;
+using FitOS.Infrastructure.Products;
+using FitOS.Infrastructure.Sales;
 using FitOS.Infrastructure.Settings;
 using FitOS.Infrastructure.Attendance;
 using FitOS.Infrastructure.Members;
@@ -17,6 +21,7 @@ using FitOS.Infrastructure.Onboarding;
 using FitOS.Infrastructure.Secrets;
 using FitOS.Infrastructure.Auth;
 using FitOS.Application.Fiscal;
+using FitOS.Domain.Sales;
 using FitOS.Infrastructure.Fiscal;
 using FitOS.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -104,6 +109,15 @@ public static class DependencyInjection
         services.AddScoped<IBranchRepository, BranchRepository>();
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
         services.AddScoped<AttendanceService>();
+        services.AddScoped<IProductRepository, ProductRepository>();
+        services.AddScoped<ProductService>();
+        services.AddOptions<SalesOptions>().Bind(configuration.GetSection(SalesOptions.Section))
+            .Validate(o => PaymentMethods.All.All(m => o.PaymentCodes.TryGetValue(m, out var c) && c.Length == 2 && c.All(char.IsAsciiDigit)),
+                "Sales:PaymentCodes needs a two-digit SRI code for every payment method.")
+            .ValidateOnStart();
+        services.AddSingleton<IPaymentCodes, ConfiguredPaymentCodes>();
+        services.AddScoped<ISaleRepository, SaleRepository>();
+        services.AddScoped<SaleService>();
         services.AddScoped<ISettingsRepository, SettingsRepository>();
         services.AddScoped<SettingsService>();
         services.AddScoped<IDashboardRepository, DashboardRepository>();

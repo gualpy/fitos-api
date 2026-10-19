@@ -106,13 +106,19 @@ Todo va por el token: el gimnasio sale del claim `tenant_id`, nunca de la URL. R
 - **Resumen:** socios registrados, socios con plan vigente, planes que vencen en 7 días sin renovación agendada, asistencia de hoy (socios distintos), quiénes siguen dentro, socios activos por género, asistencia de los últimos 7 días y ventas pagadas (hoy y 7 días). Todo se calcula en SQL, con el calendario del gimnasio (no UTC) y bajo RLS: cada consulta ya queda dentro del gimnasio del token.
 - **Insights con IA** (opcional): la API llama a Gemini; la clave **solo existe en el servidor** (`Gemini:ApiKey`, por user-secrets o variable de entorno `Gemini__ApiKey`, nunca en el repositorio ni en el navegador). Sin clave responde 503 `insights_unavailable`; si el proveedor falla, 502 `insights_failed`. Al proveedor solo viajan **cifras agregadas** (sin nombres ni datos personales). La respuesta se guarda en memoria por gimnasio (`Gemini:CacheHours`, 6 por defecto) y es el usuario quien la pide con un botón.
 
-## Ajustes (hecho)
+## Ajustes, productos y ventas (hecho)
 | Endpoint | Quién |
 |---|---|
 | `GET /settings` | owner, admin, reception |
 | `PUT /settings` (`allowWithoutPlan` y, opcional, los 7 días de `hours`) | owner, admin |
+| `GET /products?q=&includeInactive=` | owner, admin, reception |
+| `POST /products`, `PUT /products/{id}`, `PUT /products/{id}/active` | owner, admin |
+| `POST /products/{id}/stock` (`delta`, `reason`: `purchase` o `adjustment`) | owner, admin |
+| `POST /sales` (`customerId?`, `lines[{productId, quantity}]`, `payments[{method, amount}]`) | owner, admin, reception |
 
 - **Ajustes:** el interruptor "entrar sin plan" y el horario semanal de la sede (lunes = 1). Los días que el gimnasio nunca guardó vienen con `configured: false` y no restringen el acceso. `PUT` exige los siete días, `HH:mm`, y que un día abierto cierre después de abrir; todo se guarda en una transacción.
+- **Productos:** precio sin IVA (0, 5 o 15 %); nombre, código y código de barras únicos por gimnasio (409 `product_name_taken`, `sku_taken`, `barcode_taken`). Se desactivan, no se borran. **El stock solo cambia con movimientos** (`stock_movements`): venta, compra o ajuste, y nunca queda bajo cero (409 `insufficient_stock`).
+- **Ventas:** el cliente solo dice qué producto y cuántos; **precios, IVA y totales los calcula el servidor** desde el catálogo (IVA sobre la suma de cada tarifa, como en la factura). Venta, líneas, pagos, descuento de stock y movimientos se escriben **en una transacción**: si falta stock, no queda nada a medias, y dos cajeros no pueden vender la última unidad. Los pagos deben sumar el total (409 `payment_mismatch`). El código SRI de cada forma de pago sale de la configuración `Sales:PaymentCodes`, no del código. Sin socio es consumidor final. Todavía no hay anulaciones ni notas de crédito.
 
 ## Base de datos de desarrollo
 Una base propia (`fitos-dev`) en el PostgreSQL local, creada con `migrate` (ver Comandos). La API se conecta como `fitos_app` con la cadena en user-secrets (`ConnectionStrings:Default`); la contraseña del administrador solo se usa para migrar y nunca se guarda en el repositorio.
@@ -128,7 +134,7 @@ Crea (o reutiliza) un socio con usuario real, membresías seguidas que cubren lo
 
 ## Hoja de ruta
 - Listar, consultar y suspender gimnasios (panel de plataforma).
-- Ventas/POS e inventario → control de acceso → reportes; la venta de una membresía se enlazará con `memberships.sale_id`.
+- Cobrar membresías como venta (enlazar con `memberships.sale_id`), anulaciones y notas de crédito → control de acceso.
 - Facturación: worker de reintentos (outbox) y descarga/envío del comprobante.
 - Dockerfile (necesita `tzdata` para las zonas horarias) y CI.
 
