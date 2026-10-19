@@ -8,6 +8,8 @@ using FitOS.Application.Customers;
 using FitOS.Application.Memberships;
 using FitOS.Application.Onboarding;
 using FitOS.Application.Plans;
+using FitOS.Application.Settings;
+using FitOS.Infrastructure.Settings;
 using FitOS.Infrastructure.Attendance;
 using FitOS.Infrastructure.Members;
 using FitOS.Application.Secrets;
@@ -102,6 +104,8 @@ public static class DependencyInjection
         services.AddScoped<IBranchRepository, BranchRepository>();
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
         services.AddScoped<AttendanceService>();
+        services.AddScoped<ISettingsRepository, SettingsRepository>();
+        services.AddScoped<SettingsService>();
         services.AddScoped<IDashboardRepository, DashboardRepository>();
         services.AddScoped<DashboardService>();
         services.Configure<GeminiOptions>(configuration.GetSection("Gemini"));
