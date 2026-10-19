@@ -24,7 +24,11 @@ public sealed record SaleDraft(
     DateTimeOffset CreatedAt,
     SaleTotals Totals,
     IReadOnlyList<PricedLine> Lines,
-    IReadOnlyList<SalePayment> Payments);
+    IReadOnlyList<SalePayment> Payments,
+    MembershipDraft? Membership = null);
+
+/// <summary>A membership written in the same transaction as the sale that pays for it.</summary>
+public sealed record MembershipDraft(Guid Id, Guid CustomerId, Guid PlanId, DateOnly StartsOn, DateOnly EndsOn);
 
 public sealed record Sale(
     Guid Id,
@@ -48,7 +52,7 @@ public interface ISaleRepository
     /// <summary>
     /// Writes the sale, its lines and payments and takes the stock out, all or nothing.
     /// </summary>
-    /// <exception cref="ConflictException"><c>insufficient_stock</c> or <c>no_branch</c></exception>
+    /// <exception cref="ConflictException"><c>insufficient_stock</c>, <c>no_branch</c> or <c>membership_overlap</c></exception>
     Task CreateAsync(SaleDraft sale, CancellationToken cancellationToken);
 }
 
@@ -67,7 +71,7 @@ public sealed class SaleService(
     {
         var errors = new ErrorBag();
         var wanted = ParseLines(input.Lines, errors);
-        var payments = ParsePayments(input.Payments, errors);
+        var payments = PaymentInputs.Parse(input.Payments, errors);
         errors.ThrowIfAny();
 
         if (input.CustomerId is { } customerId && await customers.GetAsync(customerId, cancellationToken) is null)
@@ -89,21 +93,11 @@ public sealed class SaleService(
         // The server decides every price and rate: the client only says what and how many.
         var lines = wanted
             .Select(w => (Product: found[w.Key], Quantity: w.Value))
-            .Select(x => new PricedLine(x.Product.Id, x.Product.Name, x.Quantity, x.Product.Price, x.Product.IvaRate, SaleCalculator.LineTotal(x.Product.Price, x.Quantity)))
+            .Select(x => new PricedLine(x.Product.Id, null, x.Product.Name, x.Quantity, x.Product.Price, x.Product.IvaRate, SaleCalculator.LineTotal(x.Product.Price, x.Quantity)))
             .ToList();
         var totals = SaleCalculator.Totals(lines);
 
-        if (payments.Sum(p => p.Amount) != totals.Total)
-        {
-            throw new ConflictException("payment_mismatch");
-        }
-
-        var resolved = new List<SalePayment>();
-        foreach (var payment in payments)
-        {
-            var code = paymentCodes.CodeFor(payment.Method) ?? throw new InvalidOperationException($"No SRI code configured for '{payment.Method}'.");
-            resolved.Add(new SalePayment(payment.Method, code, payment.Amount));
-        }
+        var resolved = PaymentInputs.Resolve(payments, totals.Total, paymentCodes);
 
         var draft = new SaleDraft(
             Guid.NewGuid(),
@@ -152,36 +146,5 @@ public sealed class SaleService(
         }
 
         return wanted;
-    }
-
-    private static List<(string Method, decimal Amount)> ParsePayments(IReadOnlyList<PaymentInput>? payments, ErrorBag errors)
-    {
-        var parsed = new List<(string, decimal)>();
-        if (payments is null or { Count: 0 })
-        {
-            errors.Add("payments", "required");
-            return parsed;
-        }
-
-        if (payments.Count > 5)
-        {
-            errors.Add("payments", "too_many");
-            return parsed;
-        }
-
-        foreach (var payment in payments)
-        {
-            var method = payment.Method?.Trim().ToLowerInvariant();
-            if (method is null || !PaymentMethods.All.Contains(method)
-                || payment.Amount is not { } amount || amount <= 0 || amount > 1_000_000 || decimal.Round(amount, 2) != amount)
-            {
-                errors.Add("payments", "invalid");
-                return parsed;
-            }
-
-            parsed.Add((method, amount));
-        }
-
-        return parsed;
     }
 }

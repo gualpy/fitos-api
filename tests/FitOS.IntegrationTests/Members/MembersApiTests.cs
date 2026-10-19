@@ -252,7 +252,7 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         var customer = await CreateCustomer(reception, "Ana", Cedula);
         var url = $"/customers/{customer}/memberships";
 
-        var first = await reception.PostAsJsonAsync(url, new { planId = plan });
+        var first = await owner.PostAsJsonAsync(url, new { planId = plan });
         Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         var firstBody = await Json(first);
         var firstEnd = DateOnly.Parse(firstBody.GetProperty("endsOn").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
@@ -261,7 +261,7 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         Assert.Equal("Mensual", firstBody.GetProperty("planName").GetString());
 
         // Renewing while covered queues the new one right after, even when a date inside the covered period is asked for.
-        var second = await Json(await reception.PostAsJsonAsync(url, new { planId = plan, startsOn = Today().AddDays(3) }));
+        var second = await Json(await owner.PostAsJsonAsync(url, new { planId = plan, startsOn = Today().AddDays(3) }));
         Assert.Equal(firstEnd.AddDays(1).ToString("yyyy-MM-dd"), second.GetProperty("startsOn").GetString());
         Assert.Equal("scheduled", second.GetProperty("state").GetString());
 
@@ -292,21 +292,21 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         var customer = await CreateCustomer(reception, "Ana");
         var url = $"/customers/{customer}/memberships";
 
-        var past = await reception.PostAsJsonAsync(url, new { planId = plan, startsOn = Today().AddDays(-1) });
+        var past = await owner.PostAsJsonAsync(url, new { planId = plan, startsOn = Today().AddDays(-1) });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, past.StatusCode);
         Assert.Equal("in_the_past", (await Json(past)).GetProperty("error").GetProperty("details").GetProperty("startsOn").GetString());
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await reception.PostAsJsonAsync(url, new { })).StatusCode); // no plan
-        Assert.Equal(HttpStatusCode.NotFound, (await reception.PostAsJsonAsync(url, new { planId = Guid.NewGuid() })).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await reception.PostAsJsonAsync($"/customers/{Guid.NewGuid()}/memberships", new { planId = plan })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(url, new { })).StatusCode); // no plan
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.PostAsJsonAsync(url, new { planId = Guid.NewGuid() })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await owner.PostAsJsonAsync($"/customers/{Guid.NewGuid()}/memberships", new { planId = plan })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await owner.PostAsync($"/memberships/{Guid.NewGuid()}/cancel", null)).StatusCode);
 
         await owner.PutAsJsonAsync($"/plans/{plan}/active", new { isActive = false });
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await reception.PostAsJsonAsync(url, new { planId = plan })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(url, new { planId = plan })).StatusCode);
         await owner.PutAsJsonAsync($"/plans/{plan}/active", new { isActive = true });
 
         await owner.PutAsJsonAsync($"/customers/{customer}/status", new { status = "inactive" });
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await reception.PostAsJsonAsync(url, new { planId = plan })).StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await owner.PostAsJsonAsync(url, new { planId = plan })).StatusCode);
     }
 
     [SkippableFact]
@@ -318,7 +318,7 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         var customer = await CreateCustomer(reception, "Ana");
         var url = $"/customers/{customer}/memberships";
 
-        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => reception.PostAsJsonAsync(url, new { planId = plan })));
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => owner.PostAsJsonAsync(url, new { planId = plan })));
 
         // Either queued behind each other (201) or the database refused a race (409): never an overlap.
         Assert.All(results, r => Assert.True(r.StatusCode is HttpStatusCode.Created or HttpStatusCode.Conflict, r.StatusCode.ToString()));
@@ -346,7 +346,7 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
 
         var planB = await CreatePlan(ownerB, "Plan de B");
         var customerB = await CreateCustomer(receptionB, "Cliente de B", Cedula);
-        var membershipB = (await Json(await receptionB.PostAsJsonAsync($"/customers/{customerB}/memberships", new { planId = planB }))).GetProperty("id").GetGuid();
+        var membershipB = (await Json(await ownerB.PostAsJsonAsync($"/customers/{customerB}/memberships", new { planId = planB }))).GetProperty("id").GetGuid();
         var planA = await CreatePlan(ownerA, "Plan de A");
         var customerA = await CreateCustomer(receptionA, "Cliente de A");
 
@@ -357,8 +357,8 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         Assert.Equal(HttpStatusCode.NotFound, (await receptionA.GetAsync($"/customers/{customerB}/memberships")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await ownerA.PutAsJsonAsync($"/plans/{planB}", new { name = "X", price = 1, durationMonths = 1 })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await ownerA.PostAsync($"/memberships/{membershipB}/cancel", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await receptionA.PostAsJsonAsync($"/customers/{customerA}/memberships", new { planId = planB })).StatusCode); // B's plan
-        Assert.Equal(HttpStatusCode.NotFound, (await receptionA.PostAsJsonAsync($"/customers/{customerB}/memberships", new { planId = planA })).StatusCode); // B's customer
+        Assert.Equal(HttpStatusCode.NotFound, (await ownerA.PostAsJsonAsync($"/customers/{customerA}/memberships", new { planId = planB })).StatusCode); // B's plan
+        Assert.Equal(HttpStatusCode.NotFound, (await ownerA.PostAsJsonAsync($"/customers/{customerB}/memberships", new { planId = planA })).StatusCode); // B's customer
 
         // Listings never leak, and B's data is untouched.
         Assert.Equal(1, (await Json(await receptionA.GetAsync("/customers"))).GetProperty("total").GetInt32());
@@ -377,7 +377,7 @@ public sealed class MembersApiTests(PostgresFixture db) : IClassFixture<Postgres
         var plan = await CreatePlan(owner);
         var mine = await CreateCustomer(reception, "Yo");
         var other = await CreateCustomer(reception, "Otro");
-        await reception.PostAsJsonAsync($"/customers/{mine}/memberships", new { planId = plan });
+        await owner.PostAsJsonAsync($"/customers/{mine}/memberships", new { planId = plan });
         await SeedUser(gym, "yo", "customer", mine);
         var me = await Login(gym.Slug, "yo");
 

@@ -120,6 +120,13 @@ Todo va por el token: el gimnasio sale del claim `tenant_id`, nunca de la URL. R
 - **Productos:** precio sin IVA (0, 5 o 15 %); nombre, código y código de barras únicos por gimnasio (409 `product_name_taken`, `sku_taken`, `barcode_taken`). Se desactivan, no se borran. **El stock solo cambia con movimientos** (`stock_movements`): venta, compra o ajuste, y nunca queda bajo cero (409 `insufficient_stock`).
 - **Ventas:** el cliente solo dice qué producto y cuántos; **precios, IVA y totales los calcula el servidor** desde el catálogo (IVA sobre la suma de cada tarifa, como en la factura). Venta, líneas, pagos, descuento de stock y movimientos se escriben **en una transacción**: si falta stock, no queda nada a medias, y dos cajeros no pueden vender la última unidad. Los pagos deben sumar el total (409 `payment_mismatch`). El código SRI de cada forma de pago sale de la configuración `Sales:PaymentCodes`, no del código. Sin socio es consumidor final. Todavía no hay anulaciones ni notas de crédito.
 
+## Membresías cobradas (hecho)
+`POST /customers/{id}/memberships` (`planId`, `startsOn?`, `payments?`):
+
+- **Con `payments`** (owner, admin, reception): el plan se cobra. En **una transacción** se escriben la venta (una línea de plan), sus pagos y la membresía enlazada por `memberships.sale_id`. El precio y el IVA salen del plan, nunca de la petición; los pagos deben sumar el total al centavo (409 `payment_mismatch`). Si dos peticiones chocan por los mismos días, una responde 409 `membership_overlap` y no queda ninguna venta suelta.
+- **Sin `payments`** es una cortesía y **solo owner y admin** pueden darla (recepción recibe 403: si no, podría regalar planes sin dejar rastro). Una lista `payments` vacía es un error de validación, no una cortesía.
+- Mismas reglas que antes: socio y plan activos, fecha no pasada, y una renovación se encola al terminar la membresía vigente. La respuesta incluye `saleId` y los totales.
+
 ## Base de datos de desarrollo
 Una base propia (`fitos-dev`) en el PostgreSQL local, creada con `migrate` (ver Comandos). La API se conecta como `fitos_app` con la cadena en user-secrets (`ConnectionStrings:Default`); la contraseña del administrador solo se usa para migrar y nunca se guarda en el repositorio.
 
@@ -134,7 +141,7 @@ Crea (o reutiliza) un socio con usuario real, membresías seguidas que cubren lo
 
 ## Hoja de ruta
 - Listar, consultar y suspender gimnasios (panel de plataforma).
-- Cobrar membresías como venta (enlazar con `memberships.sale_id`), anulaciones y notas de crédito → control de acceso.
+- Anulaciones y notas de crédito de ventas → control de acceso.
 - Facturación: worker de reintentos (outbox) y descarga/envío del comprobante.
 - Dockerfile (necesita `tzdata` para las zonas horarias) y CI.
 

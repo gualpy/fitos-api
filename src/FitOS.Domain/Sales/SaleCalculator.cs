@@ -1,6 +1,7 @@
 namespace FitOS.Domain.Sales;
 
-public sealed record PricedLine(Guid ProductId, string Description, int Quantity, decimal UnitPrice, decimal IvaRate, decimal LineTotal);
+/// <summary>One line of a sale: a product OR a plan (exactly one of the two ids is set).</summary>
+public sealed record PricedLine(Guid? ProductId, Guid? PlanId, string Description, int Quantity, decimal UnitPrice, decimal IvaRate, decimal LineTotal);
 
 public sealed record SaleTotals(decimal Subtotal, decimal TaxTotal, decimal Total);
 

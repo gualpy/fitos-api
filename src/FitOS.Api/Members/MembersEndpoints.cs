@@ -4,6 +4,8 @@ using FitOS.Application.Common;
 using FitOS.Application.Customers;
 using FitOS.Application.Memberships;
 using FitOS.Application.Plans;
+using FitOS.Application.Sales;
+using FitOS.Api.Products;
 using FitOS.Domain.Customers;
 using FitOS.Domain.Memberships;
 using FitOS.Domain.Plans;
@@ -128,15 +130,37 @@ public static class MembersEndpoints
         return Results.Ok((await service.ListForCustomerAsync(id, ct)).Select(ToResponse));
     }
 
-    private static async Task<IResult> AssignMembership(Guid id, AssignRequest body, MembershipService service, CancellationToken ct)
+    /// <summary>
+    /// With <c>payments</c> the plan is charged: a sale is created and linked to the membership. Without them it is a courtesy,
+    /// which only owners and administrators may give (reception could otherwise hand out free plans with no trace).
+    /// </summary>
+    private static async Task<IResult> AssignMembership(
+        Guid id,
+        AssignRequest body,
+        ClaimsPrincipal user,
+        MembershipService free,
+        MembershipSaleService paid,
+        CancellationToken ct)
     {
         if (body.PlanId is not { } planId)
         {
             throw new ValidationFailedException("planId", "required");
         }
 
-        var view = await service.AssignAsync(id, planId, body.StartsOn, ct);
-        return Results.Created($"/customers/{id}/memberships", ToResponse(view));
+        if (body.Payments is null)
+        {
+            if (!user.IsInRole("owner") && !user.IsInRole("admin"))
+            {
+                return Results.Forbid();
+            }
+
+            var view = await free.AssignAsync(id, planId, body.StartsOn, ct);
+            return Results.Created($"/customers/{id}/memberships", ToResponse(view));
+        }
+
+        var payments = body.Payments.Select(p => new PaymentInput(p.Method, p.Amount)).ToList();
+        var result = await paid.AssignAsync(id, planId, body.StartsOn, payments, ProductsEndpoints.UserId(user), ct);
+        return Results.Created($"/customers/{id}/memberships", ToResponse(result));
     }
 
     private static async Task<IResult> CancelMembership(Guid id, MembershipService service, CancellationToken ct) =>
@@ -175,6 +199,21 @@ public static class MembersEndpoints
         ActiveUntil = activeUntil,
     };
 
+    private static object ToResponse(MembershipSale r) => new
+    {
+        r.Membership.Membership.Id,
+        r.Membership.Membership.CustomerId,
+        r.Membership.Membership.PlanId,
+        r.Membership.PlanName,
+        r.Membership.Membership.StartsOn,
+        r.Membership.Membership.EndsOn,
+        State = r.Membership.State.ToString().ToLowerInvariant(),
+        SaleId = r.Sale.Id,
+        r.Sale.Totals.Subtotal,
+        r.Sale.Totals.TaxTotal,
+        r.Sale.Totals.Total,
+    };
+
     private static object ToResponse(MembershipView v) => new
     {
         v.Membership.Id,
@@ -202,5 +241,7 @@ public static class MembersEndpoints
 
     public sealed record StatusRequest(string? Status);
 
-    public sealed record AssignRequest(Guid? PlanId, DateOnly? StartsOn);
+    public sealed record AssignRequest(Guid? PlanId, DateOnly? StartsOn, List<PaymentRequest>? Payments);
+
+    public sealed record PaymentRequest(string? Method, decimal? Amount);
 }

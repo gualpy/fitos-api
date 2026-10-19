@@ -105,6 +105,7 @@ public static class DependencyInjection
         services.AddScoped<PlanService>();
         services.AddScoped<CustomerService>();
         services.AddScoped<MembershipService>();
+        services.AddScoped<MembershipSaleService>();
         services.AddScoped<IAttendanceRepository, AttendanceRepository>();
         services.AddScoped<IBranchRepository, BranchRepository>();
         services.AddScoped<IBusinessHoursRepository, BusinessHoursRepository>();
