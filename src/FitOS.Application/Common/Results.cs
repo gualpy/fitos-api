@@ -30,6 +30,8 @@ public sealed class ErrorBag
 {
     private readonly Dictionary<string, string> _errors = [];
 
+    public bool HasAny => _errors.Count > 0;
+
     public void Add(string field, string code) => _errors.TryAdd(field, code);
 
     public void ThrowIfAny()
