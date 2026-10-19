@@ -7,6 +7,7 @@ using FitOS.Api.Dashboard;
 using FitOS.Api.Members;
 using FitOS.Api.Platform;
 using FitOS.Api.Security;
+using FitOS.Api.Settings;
 using FitOS.Api.Tenancy;
 using FitOS.Infrastructure;
 using FitOS.Infrastructure.Auth;
@@ -143,6 +144,7 @@ app.MapPlatform();
 app.MapMembers();
 app.MapAttendance();
 app.MapDashboard();
+app.MapSettings();
 
 app.Run();
 
