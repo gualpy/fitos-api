@@ -38,7 +38,10 @@ public interface ICustomerRepository
     Task SaveAsync(CancellationToken cancellationToken);
 }
 
-public sealed partial class CustomerService(ICustomerRepository customers, ITenantContext tenant, ITenantClock clock)
+/// <param name="checkIdentification">
+/// When false (development only) cédula and RUC check digits are not verified, so test customers can use made-up numbers.
+/// </param>
+public sealed partial class CustomerService(ICustomerRepository customers, ITenantContext tenant, ITenantClock clock, bool checkIdentification = true)
 {
     public const int MaxPageSize = 100;
 
@@ -87,7 +90,7 @@ public sealed partial class CustomerService(ICustomerRepository customers, ITena
         return customer;
     }
 
-    private static void Apply(Customer customer, CustomerInput input, DateOnly today)
+    private void Apply(Customer customer, CustomerInput input, DateOnly today)
     {
         var errors = new ErrorBag();
 
@@ -153,13 +156,13 @@ public sealed partial class CustomerService(ICustomerRepository customers, ITena
         customer.RfidCard = rfid;
     }
 
-    private static void ValidateIdentification(ErrorBag errors, string type, string id)
+    private void ValidateIdentification(ErrorBag errors, string type, string id)
     {
         var valid = type switch
         {
-            "05" => EcuadorId.IsValidCedula(id),
-            "04" => EcuadorId.IsValidRuc(id),
-            "06" or "08" => id.Length is >= 3 and <= 20 && id.All(char.IsAsciiLetterOrDigit),
+            "05" => checkIdentification ? EcuadorId.IsValidCedula(id) : IsLooseId(id),
+            "04" => checkIdentification ? EcuadorId.IsValidRuc(id) : IsLooseId(id),
+            "06" or "08" => IsLooseId(id),
             _ => false,
         };
 
@@ -168,6 +171,8 @@ public sealed partial class CustomerService(ICustomerRepository customers, ITena
             errors.Add(type is "04" or "05" or "06" or "08" ? "identification" : "identificationType", "invalid");
         }
     }
+
+    private static bool IsLooseId(string id) => id.Length is >= 3 and <= 20 && id.All(char.IsAsciiLetterOrDigit);
 
     private static bool IsEmail(string value) =>
         value.Length <= 254 && MailAddress.TryCreate(value, out var address) && address.Address == value;

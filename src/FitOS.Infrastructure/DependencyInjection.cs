@@ -103,7 +103,13 @@ public static class DependencyInjection
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<IMembershipRepository, MembershipRepository>();
         services.AddScoped<PlanService>();
-        services.AddScoped<CustomerService>();
+        // Development only: Customers:ValidateIdentification=false skips the cédula/RUC check digits.
+        var validateIdentification = configuration.GetValue("Customers:ValidateIdentification", true);
+        services.AddScoped(sp => new CustomerService(
+            sp.GetRequiredService<ICustomerRepository>(),
+            sp.GetRequiredService<ITenantContext>(),
+            sp.GetRequiredService<ITenantClock>(),
+            validateIdentification));
         services.AddScoped<MembershipService>();
         services.AddScoped<MembershipSaleService>();
         services.AddScoped<IAttendanceRepository, AttendanceRepository>();
