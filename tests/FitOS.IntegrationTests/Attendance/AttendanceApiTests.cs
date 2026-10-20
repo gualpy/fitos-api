@@ -107,7 +107,7 @@ public sealed class AttendanceApiTests(PostgresFixture db) : IClassFixture<Postg
     {
         var plan = (await Json(await owner.PostAsJsonAsync("/plans", new { name = "Plan " + Guid.NewGuid().ToString("N")[..6], price = 40, durationMonths = 1 }))).GetProperty("id").GetGuid();
         var customer = await CreateCustomer(staff, name, rfid);
-        Assert.Equal(HttpStatusCode.Created, (await staff.PostAsJsonAsync($"/customers/{customer}/memberships", new { planId = plan })).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await owner.PostAsJsonAsync($"/customers/{customer}/memberships", new { planId = plan })).StatusCode);
         return customer;
     }
 

@@ -11,7 +11,7 @@ namespace FitOS.UnitTests.Sales;
 public sealed class SaleCalculatorTests
 {
     private static PricedLine Line(decimal unit, int qty, decimal iva) =>
-        new(Guid.NewGuid(), "x", qty, unit, iva, SaleCalculator.LineTotal(unit, qty));
+        new(Guid.NewGuid(), null, "x", qty, unit, iva, SaleCalculator.LineTotal(unit, qty));
 
     [Fact]
     public void Line_total_is_price_times_quantity_rounded_to_cents()

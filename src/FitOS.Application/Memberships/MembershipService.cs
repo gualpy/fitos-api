@@ -4,11 +4,15 @@ using FitOS.Application.Customers;
 using FitOS.Application.Plans;
 using FitOS.Domain.Customers;
 using FitOS.Domain.Memberships;
+using FitOS.Domain.Plans;
 
 namespace FitOS.Application.Memberships;
 
 /// <summary>A membership together with the name of its plan and what it means today.</summary>
 public sealed record MembershipView(Membership Membership, string PlanName, MembershipState State);
+
+/// <summary>The plan a customer is about to join and the days it would cover.</summary>
+public sealed record PlannedMembership(Plan Plan, DateOnly Today, DateOnly Start, DateOnly End);
 
 public interface IMembershipRepository
 {
@@ -46,8 +50,11 @@ public sealed class MembershipService(
             .ToList();
     }
 
-    /// <summary>Assigns a plan by hand (courtesy, cash at the desk before the POS exists). Paid sales will link via <c>SaleId</c>.</summary>
-    public async Task<MembershipView> AssignAsync(Guid customerId, Guid planId, DateOnly? startsOn, CancellationToken cancellationToken)
+    /// <summary>
+    /// Checks that the customer and plan can be joined now and works out the dates (queued after the current membership).
+    /// Shared by the free assignment and the paid one so both obey the same rules.
+    /// </summary>
+    public async Task<PlannedMembership> PlanAsync(Guid customerId, Guid planId, DateOnly? startsOn, CancellationToken cancellationToken)
     {
         var customer = await customers.GetAsync(customerId, cancellationToken) ?? throw new NotFoundException("customer");
         var plan = await plans.GetAsync(planId, cancellationToken) ?? throw new NotFoundException("plan");
@@ -73,19 +80,26 @@ public sealed class MembershipService(
 
         var latestEnd = await memberships.LatestEndAsync(customerId, cancellationToken);
         var (start, end) = MembershipRules.Schedule(today, startsOn, latestEnd, plan.DurationMonths);
+        return new PlannedMembership(plan, today, start, end);
+    }
+
+    /// <summary>Assigns a plan with no charge (courtesy). Charged memberships go through <see cref="MembershipSaleService"/>.</summary>
+    public async Task<MembershipView> AssignAsync(Guid customerId, Guid planId, DateOnly? startsOn, CancellationToken cancellationToken)
+    {
+        var planned = await PlanAsync(customerId, planId, startsOn, cancellationToken);
 
         var membership = new Membership
         {
             TenantId = tenant.TenantId ?? throw new InvalidOperationException("No tenant in scope."),
             CustomerId = customerId,
             PlanId = planId,
-            StartsOn = start,
-            EndsOn = end,
+            StartsOn = planned.Start,
+            EndsOn = planned.End,
         };
         memberships.Add(membership);
         await memberships.SaveAsync(cancellationToken);
 
-        return new MembershipView(membership, plan.Name, MembershipRules.StateOf(membership.Status, start, end, today));
+        return new MembershipView(membership, planned.Plan.Name, MembershipRules.StateOf(membership.Status, planned.Start, planned.End, planned.Today));
     }
 
     public async Task<MembershipView> CancelAsync(Guid membershipId, CancellationToken cancellationToken)
