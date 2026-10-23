@@ -37,8 +37,8 @@ public sealed class PostgresTenantOnboardingStore(FitOsDbContext db) : ITenantOn
             await Run("SELECT set_config('app.tenant_id', @t, true)", ("t", t.TenantId.ToString()));
 
             await Run(
-                "INSERT INTO tenants (id, name, slug, status) VALUES (@id, @name, @slug, 'active')",
-                ("id", t.TenantId), ("name", t.Name), ("slug", t.Slug));
+                "INSERT INTO tenants (id, name, slug, status, subscription_ends_on) VALUES (@id, @name, @slug, 'trial', @ends)",
+                ("id", t.TenantId), ("name", t.Name), ("slug", t.Slug), ("ends", t.SubscriptionEndsOn));
 
             await Run("INSERT INTO tenant_settings (tenant_id) VALUES (@id)", ("id", t.TenantId));
 
@@ -63,10 +63,10 @@ public sealed class PostgresTenantOnboardingStore(FitOsDbContext db) : ITenantOn
 
             var ownerId = (Guid)(await Run(
                 """
-                INSERT INTO users (tenant_id, username, password_hash, display_name, role, must_change_password)
-                VALUES (@id, @user, @hash, @name, 'owner', true) RETURNING id
+                INSERT INTO users (tenant_id, username, password_hash, display_name, role, must_change_password, email)
+                VALUES (@id, @user, @hash, @name, 'owner', true, @email) RETURNING id
                 """,
-                ("id", t.TenantId), ("user", t.OwnerUsername), ("hash", t.OwnerPasswordHash), ("name", t.OwnerDisplayName)))!;
+                ("id", t.TenantId), ("user", t.OwnerUsername), ("hash", t.OwnerPasswordHash), ("name", t.OwnerDisplayName), ("email", t.OwnerEmail)))!;
 
             // The audit entry never contains secrets: no API key, no password, no hash.
             var after = JsonSerializer.Serialize(new

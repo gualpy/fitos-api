@@ -49,6 +49,7 @@ public sealed class EdgeSecurityTests : IDisposable
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
             host.UseEnvironment("Production");
+            host.UseProductionMailSettings();
             host.UseTestSecrets();
             foreach (var (key, value) in settings ?? [])
             {

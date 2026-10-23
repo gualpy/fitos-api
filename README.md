@@ -51,6 +51,14 @@ FITOS_TEST_PG="Host=localhost;Username=postgres;Password=$POSTGRES_PASSWORD;Data
 - **Hash:** PBKDF2-HMAC-SHA512 con sal (hasher de ASP.NET Core Identity). Todas las fallas devuelven el mismo 401 tras trabajo comparable.
 - **Bloqueo:** 5 fallos → 15 min (configurable); una cuenta bloqueada ni siquiera se verifica. **Límite:** 10 intentos/min por IP.
 
+## Suscripciones, correo y panel de plataforma (hecho)
+- **Vencimiento.** Cada gimnasio tiene `subscription_ends_on` (último día con servicio, inclusive). El alta lo deja en hoy + `Subscription:TrialDays` (30) con estado `trial`. Al pasar ese día el gimnasio deja de entrar **solo**, sin ningún proceso: el estado efectivo (`expired`) se calcula al iniciar sesión y al renovar. Sin días de gracia.
+- **Login de un gimnasio vencido o suspendido:** `403 tenant_inactive`, solo con la contraseña correcta (con una incorrecta sigue siendo el `401` de siempre, para no revelar qué cuentas existen). Los datos se conservan; al renovar, el acceso vuelve solo.
+- **Aviso.** `GET /subscription` (personal del gimnasio) → `{endsOn, daysLeft, showReminder}`; `showReminder` es `true` desde `Subscription:ReminderDays` (3) días antes.
+- **Plataforma** (solo `platform_admin`): `GET /platform/tenants` (estado, días restantes, socios), `POST /platform/tenants/{id}/subscription {months, amount}` (suma meses desde el vencimiento, o desde hoy si ya venció, y guarda lo cobrado), `POST .../suspend` y `.../reactivate`, `POST .../resend-welcome`, `GET /platform/revenue` (suma por mes de lo cobrado a los gimnasios). Todo pasa por funciones `SECURITY DEFINER`: el rol de la API no lee `subscription_payments` ni otros gimnasios.
+- **Alta de gimnasio:** pide `ownerEmail` y ya no devuelve contraseña temporal. El dueño recibe un correo con un enlace de un solo uso (vence en `Auth:SetupLinkHours`, 48 h) que apunta a `App:PublicUrl` con el token en el fragmento (`/#setup=...`, nunca llega a un log del servidor); solo se guarda su hash. El front lo canjea con `POST /auth/set-password {token, password}`. Si el correo falla, el gimnasio se crea igual (`welcomeEmailSent: false`) y se reenvía desde el panel.
+- **Correo.** `Email:Host`, `Email:Port` (587), `Email:Username`, `Email:Password`, `Email:From`, `Email:FromName`. La clave es un secreto: user-secrets en desarrollo y variable de entorno en producción (`Email__Password`). Con Gmail: `smtp.gmail.com`, puerto 587, usuario y `From` = la cuenta, y una **clave de aplicación** (no la contraseña real). En Development sin servidor de correo, el mensaje (con su enlace) se escribe en el log de la API. Fuera de Development la API **no arranca** sin `Email:Host`/`Email:From` ni sin `App:PublicUrl` (https).
+
 ## Alta de gimnasios (hecho)
 Solo administradores de plataforma (`role=platform_admin`, sin `tenant_id`). Orden operativo:
 1. **En SICOFAC (manual):** crear la empresa y que su dueño genere la API key (SICOFAC no permite crear empresas por API).

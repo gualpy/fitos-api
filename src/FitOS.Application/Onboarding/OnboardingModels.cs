@@ -13,6 +13,7 @@ public sealed record OnboardTenantCommand(
     string ProviderApiKey,
     string OwnerUsername,
     string OwnerDisplayName,
+    string OwnerEmail,
     string Environment = "test",
     string SriEstablishment = "001",
     string EmissionPointCode = "001");
@@ -36,9 +37,12 @@ public sealed record NewTenant(
     string EmissionPointCode,
     string OwnerUsername,
     string OwnerDisplayName,
-    string OwnerPasswordHash);
+    string OwnerEmail,
+    string OwnerPasswordHash,
+    DateOnly SubscriptionEndsOn);
 
-public sealed record OnboardTenantResult(Guid TenantId, string Slug, Guid OwnerUserId, string OwnerUsername, string TemporaryPassword);
+/// <param name="WelcomeEmailSent">False when the gym was created but the e-mail could not be sent: resend it from the panel.</param>
+public sealed record OnboardTenantResult(Guid TenantId, string Slug, Guid OwnerUserId, string OwnerUsername, bool WelcomeEmailSent);
 
 /// <summary>Input rejected before touching the database. <see cref="Errors"/> maps field name to a stable code.</summary>
 public sealed class OnboardingValidationException(IReadOnlyDictionary<string, string> errors) : Exception("Invalid onboarding data.")

@@ -13,6 +13,7 @@ public sealed class CorsTests
         new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
             host.UseEnvironment("Production"); // so appsettings.Development.json (which lists localhost:3000) is not loaded
+            host.UseProductionMailSettings();
             host.UseTestSecrets();
             for (var i = 0; i < origins.Length; i++)
             {

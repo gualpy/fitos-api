@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using FitOS.Api.Tenancy;
+using FitOS.Application.Email;
 using FitOS.Application.Fiscal;
 using FitOS.Application.Onboarding;
 using FitOS.Domain.Identification;
@@ -53,17 +54,36 @@ public sealed class PlatformApiTests(PostgresFixture db) : IClassFixture<Postgre
         }
     }
 
-    private (HttpClient Client, WebApplicationFactory<Program> App) Boot(IFiscalProvider? provider = null)
+    private sealed class CapturingEmail : IEmailSender
+    {
+        public List<EmailMessage> Sent { get; } = [];
+
+        public Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+        {
+            Sent.Add(message);
+            return Task.CompletedTask;
+        }
+    }
+
+    private (HttpClient Client, WebApplicationFactory<Program> App) Boot(IFiscalProvider? provider = null, IEmailSender? email = null)
     {
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
             host.UseTestSecrets();
             host.UseSetting("ConnectionStrings:Default", db.AppConnection);
             host.UseSetting("Auth:LoginRequestsPerMinute", "1000");
-            if (provider is not null)
+            host.ConfigureTestServices(services =>
             {
-                host.ConfigureTestServices(services => services.AddSingleton(provider));
-            }
+                if (provider is not null)
+                {
+                    services.AddSingleton(provider);
+                }
+
+                if (email is not null)
+                {
+                    services.AddSingleton(email);
+                }
+            });
         });
         _factories.Add(factory);
         return (factory.CreateClient(), factory);
@@ -102,6 +122,7 @@ public sealed class PlatformApiTests(PostgresFixture db) : IClassFixture<Postgre
         providerApiKey = apiKey,
         ownerUsername = owner,
         ownerDisplayName = "Dueño",
+        ownerEmail = owner + "@gym.test",
         environment = "test",
     };
 
@@ -172,7 +193,8 @@ public sealed class PlatformApiTests(PostgresFixture db) : IClassFixture<Postgre
     public async Task Onboarding_creates_the_whole_gym_and_the_owner_can_log_in()
     {
         Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
-        var (app, factory) = Boot();
+        var email = new CapturingEmail();
+        var (app, factory) = Boot(email: email);
         var (client, adminId) = await PlatformClient(existing: app);
         var slug = NewSlug();
         var ruc = NewRuc();
@@ -180,13 +202,13 @@ public sealed class PlatformApiTests(PostgresFixture db) : IClassFixture<Postgre
         var response = await client.PostAsJsonAsync("/platform/tenants", Body(slug, ruc, owner: "Dueno.Titan"));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        Assert.Contains("no-store", response.Headers.CacheControl?.ToString());
         var created = await Json(response);
         var tenantId = created.GetProperty("tenantId").GetGuid();
-        var temporaryPassword = created.GetProperty("temporaryPassword").GetString()!;
         Assert.Equal("dueno.titan", created.GetProperty("ownerUsername").GetString());
+        Assert.True(created.GetProperty("welcomeEmailSent").GetBoolean());
+        Assert.False(created.TryGetProperty("temporaryPassword", out _)); // nobody ever sees a password
 
-        Assert.Equal("active", await db.ScalarAsync("SELECT status FROM tenants WHERE id = @id", ("id", tenantId)));
+        Assert.Equal("trial", await db.ScalarAsync("SELECT status FROM tenants WHERE id = @id", ("id", tenantId)));
         Assert.Equal(1L, await db.ScalarAsync("SELECT count(*) FROM tenant_settings WHERE tenant_id = @id", ("id", tenantId)));
         Assert.Equal(ruc, await db.ScalarAsync("SELECT ruc FROM tenant_fiscal_config WHERE tenant_id = @id", ("id", tenantId)));
         Assert.Equal("001", await db.ScalarAsync("SELECT sri_establishment FROM branches WHERE tenant_id = @id AND name = 'Matriz'", ("id", tenantId)));
@@ -207,13 +229,26 @@ public sealed class PlatformApiTests(PostgresFixture db) : IClassFixture<Postgre
         var audit = (string)(await db.ScalarAsync("SELECT after::text FROM audit_log WHERE tenant_id = @id AND action = 'tenant.onboarded' AND user_id = @actor", ("id", tenantId), ("actor", adminId)))!;
         Assert.Contains(slug, audit);
         Assert.DoesNotContain(ProviderKey, audit);
-        Assert.DoesNotContain(temporaryPassword, audit);
+        Assert.Equal(30, ((DateTime)(await db.ScalarAsync("SELECT subscription_ends_on FROM tenants WHERE id = @id", ("id", tenantId)))! - DateTime.UtcNow.Date).Days);
+        Assert.Equal("Dueno.Titan@gym.test", await db.ScalarAsync("SELECT email::text FROM users WHERE tenant_id = @id AND role = 'owner'", ("id", tenantId)));
 
-        // The owner logs in with the temporary password, must change it, and has no platform powers.
-        var login = await Json(await Login(client, slug, "dueno.titan", temporaryPassword));
+        // The owner gets an e-mail with a one-time link; before using it the account cannot log in with anything.
+        var message = Assert.Single(email.Sent);
+        Assert.Equal("Dueno.Titan@gym.test", message.To);
+        var token = message.Body.Split("#setup=")[1].Split('\n')[0].Trim();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Login(client, slug, "dueno.titan", "Whatever-123456")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, (await client.PostAsJsonAsync("/auth/set-password", new { token, password = "short" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/auth/set-password", new { token, password = Password })).StatusCode);
+        var reused = await client.PostAsJsonAsync("/auth/set-password", new { token, password = "Another-Pass-9!" });
+        Assert.Equal(HttpStatusCode.BadRequest, reused.StatusCode);
+        Assert.Equal("invalid_link", (await Json(reused)).GetProperty("error").GetProperty("code").GetString());
+
+        // Now the owner logs in with the password they chose; nothing forces a change, and there are no platform powers.
+        var login = await Json(await Login(client, slug, "dueno.titan", Password));
         Assert.Equal("owner", login.GetProperty("user").GetProperty("role").GetString());
         Assert.Equal(tenantId, login.GetProperty("user").GetProperty("tenantId").GetGuid());
-        Assert.True(login.GetProperty("user").GetProperty("mustChangePassword").GetBoolean());
+        Assert.False(login.GetProperty("user").GetProperty("mustChangePassword").GetBoolean());
 
         using var ownerClient = factory.CreateClient();
         ownerClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login.GetProperty("accessToken").GetString());

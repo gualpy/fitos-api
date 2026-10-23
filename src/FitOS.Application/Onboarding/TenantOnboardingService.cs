@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using FitOS.Application.Auth;
+using FitOS.Application.Email;
+using FitOS.Application.Subscriptions;
 using FitOS.Application.Secrets;
 using FitOS.Domain.Identification;
 using FitOS.Domain.Tenancy;
@@ -10,7 +12,13 @@ namespace FitOS.Application.Onboarding;
 /// Creates a gym (tenant) with its owner and fiscal configuration. Platform administrators only
 /// (enforced at the API). The SICOFAC company and its API key are created beforehand in SICOFAC.
 /// </summary>
-public sealed partial class TenantOnboardingService(ITenantOnboardingStore store, IPasswordService passwords, ISecretProtector secrets)
+public sealed partial class TenantOnboardingService(
+    ITenantOnboardingStore store,
+    IPasswordService passwords,
+    ISecretProtector secrets,
+    PasswordSetupService setup,
+    SubscriptionPolicy subscription,
+    TimeProvider clock)
 {
     public static readonly IReadOnlySet<string> Regimes = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -20,11 +28,12 @@ public sealed partial class TenantOnboardingService(ITenantOnboardingStore store
     public async Task<OnboardTenantResult> OnboardAsync(OnboardTenantCommand command, Guid actorId, CancellationToken cancellationToken)
     {
         // Usernames are case-insensitive (citext); store them lowercase so they read the same everywhere.
-        command = command with { OwnerUsername = command.OwnerUsername.Trim().ToLowerInvariant() };
+        command = command with { OwnerUsername = command.OwnerUsername.Trim().ToLowerInvariant(), OwnerEmail = command.OwnerEmail.Trim() };
         Validate(command);
 
         var tenantId = Guid.NewGuid();
-        var temporaryPassword = TemporaryPassword.Generate();
+        // The owner never receives a password: the hash is of a random value nobody sees, and a one-time link sets the real one.
+        var unusablePassword = TemporaryPassword.Generate(32);
         var key = command.ProviderApiKey.Trim();
 
         var tenant = new NewTenant(
@@ -45,10 +54,26 @@ public sealed partial class TenantOnboardingService(ITenantOnboardingStore store
             command.EmissionPointCode,
             command.OwnerUsername,
             command.OwnerDisplayName.Trim(),
-            passwords.Hash(temporaryPassword));
+            command.OwnerEmail,
+            passwords.Hash(unusablePassword),
+            DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime).AddDays(subscription.TrialDays));
 
         var ownerId = await store.CreateAsync(tenant, actorId, cancellationToken);
-        return new OnboardTenantResult(tenantId, command.Slug, ownerId, tenant.OwnerUsername, temporaryPassword);
+
+        // The gym exists whatever happens to the e-mail; if it fails the operator resends it from the panel.
+        var sent = true;
+        try
+        {
+            await setup.SendWelcomeAsync(
+                new WelcomeRecipient(ownerId, command.OwnerEmail, tenant.OwnerDisplayName, tenant.OwnerUsername, tenant.Name, tenant.Slug),
+                cancellationToken);
+        }
+        catch (EmailDeliveryException)
+        {
+            sent = false;
+        }
+
+        return new OnboardTenantResult(tenantId, command.Slug, ownerId, tenant.OwnerUsername, sent);
     }
 
     private static void Validate(OnboardTenantCommand c)
@@ -79,6 +104,11 @@ public sealed partial class TenantOnboardingService(ITenantOnboardingStore store
         if (!UsernamePattern().IsMatch(c.OwnerUsername))
         {
             errors["ownerUsername"] = "invalid_format";
+        }
+
+        if (c.OwnerEmail.Length is 0 or > 254 || !EmailPattern().IsMatch(c.OwnerEmail))
+        {
+            errors["ownerEmail"] = string.IsNullOrWhiteSpace(c.OwnerEmail) ? "required" : "invalid_format";
         }
 
         if (!Regimes.Contains(c.Regime))
@@ -121,6 +151,9 @@ public sealed partial class TenantOnboardingService(ITenantOnboardingStore store
 
     [GeneratedRegex("^[a-z0-9][a-z0-9._-]{2,49}$")]
     private static partial Regex UsernamePattern();
+
+    [GeneratedRegex(@"^[^@\s]+@[^@\s]+\.[^@\s]+$")]
+    private static partial Regex EmailPattern();
 
     [GeneratedRegex("^[0-9]{3}$")]
     private static partial Regex ThreeDigits();

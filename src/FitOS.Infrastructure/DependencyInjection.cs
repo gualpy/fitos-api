@@ -4,6 +4,12 @@ using FitOS.Application.Attendance;
 using FitOS.Application.Dashboard;
 using FitOS.Infrastructure.Dashboard;
 using FitOS.Application.Common;
+using FitOS.Application.Email;
+using FitOS.Application.Platform;
+using FitOS.Application.Subscriptions;
+using FitOS.Infrastructure.Email;
+using FitOS.Infrastructure.Platform;
+using FitOS.Infrastructure.Subscriptions;
 using FitOS.Application.Customers;
 using FitOS.Application.Measurements;
 using FitOS.Application.Memberships;
@@ -93,6 +99,29 @@ public static class DependencyInjection
 
         services.AddOptions<SecretsOptions>().Bind(configuration.GetSection(SecretsOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
+        services.AddOptions<EmailOptions>().Bind(configuration.GetSection(EmailOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
+        if (configuration.GetSection(EmailOptions.Section).Get<EmailOptions>()?.IsConfigured == true)
+        {
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
+        }
+        else
+        {
+            // Without a mail server the message goes to the log: Program.cs refuses to start like this outside Development.
+            services.AddSingleton<IEmailSender, LogEmailSender>();
+        }
+
+        services.AddSingleton(new SetupLinkPolicy(
+            configuration["App:PublicUrl"] ?? string.Empty,
+            TimeSpan.FromHours(Math.Clamp(configuration.GetValue("Auth:SetupLinkHours", 48), 1, 168))));
+        services.AddSingleton(new SubscriptionPolicy(
+            Math.Clamp(configuration.GetValue("Subscription:TrialDays", 30), 1, 365),
+            Math.Clamp(configuration.GetValue("Subscription:ReminderDays", 3), 0, 60)));
+        services.AddScoped<IPasswordSetupStore, PostgresPasswordSetupStore>();
+        services.AddScoped<PasswordSetupService>();
+        services.AddScoped<IPlatformStore, PostgresPlatformStore>();
+        services.AddScoped<PlatformService>();
+        services.AddScoped<ISubscriptionReader, SubscriptionReader>();
+        services.AddScoped<SubscriptionService>();
         services.AddScoped<ITenantOnboardingStore, PostgresTenantOnboardingStore>();
         services.AddScoped<TenantOnboardingService>();
         services.AddScoped<ITenantFiscalAccountStore, PostgresTenantFiscalAccountStore>();
