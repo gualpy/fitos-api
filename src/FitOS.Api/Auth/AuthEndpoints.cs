@@ -18,6 +18,7 @@ public static class AuthEndpoints
         var group = app.MapGroup("/auth");
         group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/refresh", RefreshAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        group.MapPost("/confirm-login", ConfirmLoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/set-password", SetPasswordAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/logout", LogoutAsync).RequireAuthorization(AuthPolicies.Authenticated);
         group.MapGet("/me", Me).RequireAuthorization(AuthPolicies.Authenticated);
@@ -53,6 +54,19 @@ public static class AuthEndpoints
             ClientOf(http),
             cancellationToken);
 
+        if (result.Challenge is { } challenge)
+        {
+            // No session yet: the browser keeps this secret and the link in the e-mail completes the login.
+            return Results.Json(
+                new { status = "confirmation_required", challengeSecret = challenge.Secret, expiresAt = challenge.ExpiresAt },
+                statusCode: StatusCodes.Status202Accepted);
+        }
+
+        if (result.ConfirmationUnavailable)
+        {
+            return Error(StatusCodes.Status403Forbidden, "confirmation_unavailable", "This account has no e-mail to confirm the login. Set one with the Migrator (set-platform-email).");
+        }
+
         if (result.GymInactive)
         {
             return Error(StatusCodes.Status403Forbidden, "tenant_inactive", "The gym's subscription ended or it was suspended. Contact the platform administrator.");
@@ -64,6 +78,25 @@ public static class AuthEndpoints
         }
 
         return Results.Ok(ToResponse(result));
+    }
+
+    private static async Task<IResult> ConfirmLoginAsync(ConfirmLoginRequest request, HttpContext http, LoginService login, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.Secret)
+            || request.Token.Length > MaxFieldLength || request.Secret.Length > MaxFieldLength)
+        {
+            return Error(StatusCodes.Status400BadRequest, "validation_failed", "token and secret are required.");
+        }
+
+        var result = await login.ConfirmAsync(request.Token.Trim(), request.Secret.Trim(), ClientOf(http), cancellationToken);
+        if (result.Succeeded)
+        {
+            return Results.Ok(ToResponse(result));
+        }
+
+        return result.ConfirmationExpired
+            ? Error(StatusCodes.Status400BadRequest, "link_expired", "The link expired. Sign in again.")
+            : Error(StatusCodes.Status400BadRequest, "invalid_link", "The link is not valid, was already used, or was opened in another browser. Sign in again.");
     }
 
     private static async Task<IResult> SetPasswordAsync(SetPasswordRequest request, HttpContext http, PasswordSetupService service, CancellationToken cancellationToken)
@@ -176,6 +209,8 @@ public static class AuthEndpoints
     public sealed record LoginResponse(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, string RefreshToken, DateTimeOffset RefreshExpiresAt, UserSummary User);
 
     public sealed record RefreshRequest(string? RefreshToken);
+
+    public sealed record ConfirmLoginRequest(string? Token, string? Secret);
 
     public sealed record SetPasswordRequest(string? Token, string? Password);
 }

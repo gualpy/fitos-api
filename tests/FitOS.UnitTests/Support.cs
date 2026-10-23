@@ -77,3 +77,41 @@ internal sealed class FakeLog : ISecurityLog
         return Task.CompletedTask;
     }
 }
+
+internal sealed class FakeChallengeStore : ILoginChallengeStore
+{
+    private (Guid UserId, string Link, string Secret, DateTimeOffset Expires, bool Used)? _challenge;
+
+    public string? Email { get; init; } = "admin@platform.test";
+
+    public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+
+    public bool Stored => _challenge is not null;
+
+    public Task<string?> CreateAsync(Guid userId, byte[] linkHash, byte[] secretHash, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+    {
+        if (Email is null)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        _challenge = (userId, Convert.ToHexString(linkHash), Convert.ToHexString(secretHash), expiresAt, false);
+        return Task.FromResult<string?>(Email);
+    }
+
+    public Task<ChallengeRedeem> RedeemAsync(byte[] linkHash, byte[] secretHash, CancellationToken cancellationToken)
+    {
+        if (_challenge is not { } c || c.Used || c.Link != Convert.ToHexString(linkHash))
+        {
+            return Task.FromResult(new ChallengeRedeem(ChallengeRedeemStatus.Invalid));
+        }
+
+        _challenge = c with { Used = true }; // a try burns the challenge, right secret or not
+        if (c.Secret != Convert.ToHexString(secretHash))
+        {
+            return Task.FromResult(new ChallengeRedeem(ChallengeRedeemStatus.Invalid));
+        }
+
+        return Task.FromResult(c.Expires <= Now ? new ChallengeRedeem(ChallengeRedeemStatus.Expired) : new ChallengeRedeem(ChallengeRedeemStatus.Ok, c.UserId));
+    }
+}
