@@ -20,6 +20,7 @@ internal static class TestSettings
         host.UseSetting("Secrets:EncryptionKey", EncryptionKey);
         // Cheap hashes keep the suite fast; production uses 210 000 (the default).
         host.UseSetting("Auth:PasswordIterations", "1000");
+        host.UseSetting("Customers:ValidateIdentification", "true"); // the development file turns it off
         return host;
     }
 
