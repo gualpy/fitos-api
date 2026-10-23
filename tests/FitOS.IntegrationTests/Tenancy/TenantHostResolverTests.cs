@@ -6,11 +6,17 @@ namespace FitOS.IntegrationTests.Tenancy;
 
 public sealed class TenantHostResolverTests
 {
-    private static TenantTarget Resolve(string host, string? baseDomain = "fitos.com", bool allowHeader = false, string? header = null)
+    private static TenantTarget Resolve(string host, string? baseDomain = "fitos.com", bool allowHeader = false, string? header = null, bool allowLoginHeader = false, string path = TenantHostResolver.LoginPath)
     {
-        var resolver = new TenantHostResolver(Options.Create(new TenancyOptions { BaseDomain = baseDomain, AllowTenantHeader = allowHeader }));
+        var resolver = new TenantHostResolver(Options.Create(new TenancyOptions
+        {
+            BaseDomain = baseDomain,
+            AllowTenantHeader = allowHeader,
+            AllowLoginTenantHeader = allowLoginHeader,
+        }));
         var request = new DefaultHttpContext().Request;
         request.Host = new HostString(host);
+        request.Path = path;
         if (header is not null)
         {
             request.Headers[TenantHostResolver.TenantHeader] = header;
@@ -70,4 +76,47 @@ public sealed class TenantHostResolverTests
     [InlineData("", TenantTargetKind.Invalid)]
     public void Allowed_header_selects_the_tenant(string header, TenantTargetKind kind) =>
         Assert.Equal(kind, Resolve("localhost", allowHeader: true, header: header).Kind);
+
+    [Fact]
+    public void Login_header_selects_the_tenant_on_a_single_domain()
+    {
+        var target = Resolve("fitos.com", allowLoginHeader: true, header: " Titan ");
+
+        Assert.Equal(TenantTargetKind.Tenant, target.Kind);
+        Assert.Equal("titan", target.Slug);
+    }
+
+    [Fact]
+    public void Login_header_is_ignored_when_the_option_is_off() =>
+        Assert.Equal(TenantTargetKind.Platform, Resolve("fitos.com", allowLoginHeader: false, header: "titan").Kind);
+
+    [Theory]
+    [InlineData("/customers")]
+    [InlineData("/auth/refresh")]
+    [InlineData("/auth/login/extra")]
+    public void Login_header_is_ignored_on_other_endpoints(string path) =>
+        Assert.Equal(TenantTargetKind.Platform, Resolve("fitos.com", allowLoginHeader: true, header: "titan", path: path).Kind);
+
+    [Theory]
+    [InlineData("www")]
+    [InlineData("api")]
+    [InlineData("Bad Slug!")]
+    [InlineData("a.b")]
+    [InlineData("")]
+    public void Login_header_with_a_reserved_or_malformed_slug_is_rejected(string header) =>
+        Assert.Equal(TenantTargetKind.Invalid, Resolve("fitos.com", allowLoginHeader: true, header: header).Kind);
+
+    [Fact]
+    public void Login_without_header_still_resolves_by_host_when_the_option_is_on()
+    {
+        Assert.Equal(TenantTargetKind.Platform, Resolve("fitos.com", allowLoginHeader: true).Kind);
+        Assert.Equal("titan", Resolve("titan.fitos.com", allowLoginHeader: true).Slug);
+    }
+
+    [Fact]
+    public void Both_options_on_resolve_the_header_everywhere_without_conflict()
+    {
+        Assert.Equal("titan", Resolve("localhost", allowHeader: true, allowLoginHeader: true, header: "titan", path: "/customers").Slug);
+        Assert.Equal("titan", Resolve("localhost", allowHeader: true, allowLoginHeader: true, header: "titan").Slug);
+    }
 }

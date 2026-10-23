@@ -67,6 +67,18 @@ Un administrador de plataforma puede todo, así que la contraseña sola no le da
 - Sin correo en la cuenta, el login responde `403 confirmation_unavailable`. Se asigna con el Migrator: `set-platform-email <usuario> <correo>`, o `FITOS_ADMIN_EMAIL` al hacer `create-platform-admin`. El correo vive en la base, nunca en el código ni en el repo.
 - `Auth:SkipPlatformConfirmation=true` apaga el paso, **solo en Development**: en cualquier otro entorno se ignora.
 
+## Un solo dominio en producción (`AllowLoginTenantHeader`)
+Por defecto el gimnasio del login sale del subdominio (`titan.fitos.com`). Para servir todo desde **un solo dominio**, activa `Tenancy:AllowLoginTenantHeader`: solo en `POST /auth/login` se acepta el gimnasio en la cabecera `X-Tenant-Slug` (mismas reglas que un subdominio: slug bien formado y no reservado). En cualquier otro endpoint la cabecera se ignora y el tenant sale del claim `tenant_id` del JWT, como siempre. Sin cabecera, el login sigue resolviéndose por host (el dominio base es la plataforma).
+`Tenancy:AllowTenantHeader` es distinta: solo para Development y la API se niega a arrancar con ella fuera de Development. Si ambas están activas, la de Development manda en todos los endpoints.
+CORS: añade el origen del dominio único a `Cors:AllowedOrigins`; `X-Tenant-Slug` ya está en las cabeceras permitidas.
+```json
+// appsettings.Production.json
+{
+  "Tenancy": { "BaseDomain": "fitos.support-me.net", "AllowTenantHeader": false, "AllowLoginTenantHeader": true },
+  "Cors": { "AllowedOrigins": [ "https://fitos.support-me.net" ] }
+}
+```
+
 ## Alta de gimnasios (hecho)
 Solo administradores de plataforma (`role=platform_admin`, sin `tenant_id`). Orden operativo:
 1. **En SICOFAC (manual):** crear la empresa y que su dueño genere la API key (SICOFAC no permite crear empresas por API).
