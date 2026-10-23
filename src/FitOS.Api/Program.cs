@@ -11,9 +11,11 @@ using FitOS.Api.Sales;
 using FitOS.Api.Security;
 using FitOS.Api.Measurements;
 using FitOS.Api.Settings;
+using FitOS.Api.Subscriptions;
 using FitOS.Api.Tenancy;
 using FitOS.Infrastructure;
 using FitOS.Infrastructure.Auth;
+using FitOS.Infrastructure.Email;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -60,6 +62,20 @@ if (builder.Configuration.GetValue<bool>($"{TenancyOptions.Section}:{nameof(Tena
     && !builder.Environment.IsDevelopment())
 {
     throw new InvalidOperationException("Tenancy:AllowTenantHeader is for Development only; the tenant must come from the host name.");
+}
+
+if (!builder.Environment.IsDevelopment())
+{
+    // Welcome links go by e-mail and point at the front: both must be real outside Development.
+    if (!(builder.Configuration.GetSection(EmailOptions.Section).Get<EmailOptions>()?.IsConfigured ?? false))
+    {
+        throw new InvalidOperationException("Email:Host and Email:From must be configured outside Development (welcome links are sent by e-mail).");
+    }
+
+    if (!Uri.TryCreate(builder.Configuration["App:PublicUrl"], UriKind.Absolute, out var publicUrl) || publicUrl.Scheme != Uri.UriSchemeHttps)
+    {
+        throw new InvalidOperationException("App:PublicUrl must be the https address of the front end (it goes into welcome e-mails).");
+    }
 }
 
 builder.Services
@@ -149,6 +165,7 @@ app.MapAttendance();
 app.MapDashboard();
 app.MapMeasurements();
 app.MapSettings();
+app.MapSubscription();
 app.MapProducts();
 app.MapSales();
 

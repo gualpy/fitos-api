@@ -18,6 +18,7 @@ public static class AuthEndpoints
         var group = app.MapGroup("/auth");
         group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/refresh", RefreshAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        group.MapPost("/set-password", SetPasswordAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/logout", LogoutAsync).RequireAuthorization(AuthPolicies.Authenticated);
         group.MapGet("/me", Me).RequireAuthorization(AuthPolicies.Authenticated);
         group.MapPost("/change-password", ChangePasswordAsync)
@@ -52,12 +53,37 @@ public static class AuthEndpoints
             ClientOf(http),
             cancellationToken);
 
+        if (result.GymInactive)
+        {
+            return Error(StatusCodes.Status403Forbidden, "tenant_inactive", "The gym's subscription ended or it was suspended. Contact the platform administrator.");
+        }
+
         if (!result.Succeeded)
         {
             return Error(StatusCodes.Status401Unauthorized, "invalid_credentials", "Invalid username or password.");
         }
 
         return Results.Ok(ToResponse(result));
+    }
+
+    private static async Task<IResult> SetPasswordAsync(SetPasswordRequest request, HttpContext http, PasswordSetupService service, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrEmpty(request.Password)
+            || request.Token.Length > MaxFieldLength || request.Password.Length > MaxFieldLength)
+        {
+            return Error(StatusCodes.Status400BadRequest, "validation_failed", "token and password are required.");
+        }
+
+        return await service.SetPasswordAsync(request.Token.Trim(), request.Password, ClientOf(http), cancellationToken) switch
+        {
+            SetPasswordOutcome.Done => Results.NoContent(),
+            SetPasswordOutcome.WeakPassword => Error(
+                StatusCodes.Status422UnprocessableEntity,
+                "weak_password",
+                $"The password needs {ChangePasswordService.MinLength}+ characters, a letter and a non-letter."),
+            SetPasswordOutcome.ExpiredLink => Error(StatusCodes.Status400BadRequest, "link_expired", "The link expired. Ask for a new one."),
+            _ => Error(StatusCodes.Status400BadRequest, "invalid_link", "The link is not valid or was already used."),
+        };
     }
 
     private static async Task<IResult> RefreshAsync(RefreshRequest request, HttpContext http, SessionService sessions, CancellationToken cancellationToken)
@@ -150,4 +176,6 @@ public static class AuthEndpoints
     public sealed record LoginResponse(string AccessToken, string TokenType, DateTimeOffset ExpiresAt, string RefreshToken, DateTimeOffset RefreshExpiresAt, UserSummary User);
 
     public sealed record RefreshRequest(string? RefreshToken);
+
+    public sealed record SetPasswordRequest(string? Token, string? Password);
 }

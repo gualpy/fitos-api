@@ -191,7 +191,12 @@ public sealed class AuthApiTests(PostgresFixture db) : IClassFixture<PostgresFix
         var client = Client();
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await Login(client, await Slug(active), "fired", Password)).StatusCode);
-        Assert.Equal(HttpStatusCode.Unauthorized, (await Login(client, await Slug(suspended), "nice", Password)).StatusCode);
+
+        // A wrong password on a suspended gym looks like any other failure; only the right one learns why it cannot enter.
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Login(client, await Slug(suspended), "nice", "Wrong-Password-1!")).StatusCode);
+        var blocked = await Login(client, await Slug(suspended), "nice", Password);
+        Assert.Equal(HttpStatusCode.Forbidden, blocked.StatusCode);
+        Assert.Equal("tenant_inactive", (await Body(blocked)).GetProperty("error").GetProperty("code").GetString());
     }
 
     [SkippableFact]

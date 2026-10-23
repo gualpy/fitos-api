@@ -1,7 +1,7 @@
 namespace FitOS.Application.Auth;
 
 /// <summary>
-/// Username + password login. Unknown user, wrong password, inactive user, suspended tenant and locked
+/// Username + password login. Unknown user, wrong password, inactive user, suspended tenant (told apart only after a right password) and locked
 /// account all return <see cref="LoginResult.Failed"/> after comparable work, so the response never
 /// reveals which accounts exist. A locked account is not even password-checked, so a lock cannot be
 /// brute-forced. Every outcome is recorded in the security log (without secrets).
@@ -57,7 +57,7 @@ public sealed class LoginService(
         if (user.TenantId is not null && user.TenantStatus is not ("active" or "trial"))
         {
             await FailedAsync(user, "tenant_inactive", client, cancellationToken);
-            return LoginResult.Failed;
+            return LoginResult.GymSuspended;
         }
 
         await store.RegisterSuccessAsync(user.UserId, cancellationToken);

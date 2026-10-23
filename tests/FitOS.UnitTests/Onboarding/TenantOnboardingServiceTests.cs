@@ -1,6 +1,7 @@
 using FitOS.Application.Auth;
 using FitOS.Application.Onboarding;
 using FitOS.Application.Secrets;
+using FitOS.Application.Subscriptions;
 
 namespace FitOS.UnitTests.Onboarding;
 
@@ -51,11 +52,20 @@ public sealed class TenantOnboardingServiceTests
     {
         var command = new OnboardTenantCommand(
             "titan", " Gimnasio Titan ", "1790016919001", " Titan S.A. ", null, " Av. Amazonas N24 ", "general", true,
-            " 12 ", " sk-live-ABCDEFGH1234 ", "Owner.Titan", " Dueño Titan ");
+            " 12 ", " sk-live-ABCDEFGH1234 ", "Owner.Titan", " Dueño Titan ", " owner@titan.test ");
         return change?.Invoke(command) ?? command;
     }
 
-    private static TenantOnboardingService Create(FakeStore store) => new(store, new FakePasswords(), new FakeSecrets());
+    private static readonly DateTimeOffset Today = new(2026, 10, 23, 12, 0, 0, TimeSpan.Zero);
+
+    private static TenantOnboardingService Create(FakeStore store, FakeEmail? email = null, FakeSetupStore? setupStore = null)
+    {
+        var time = new FixedTime(Today);
+        var setup = new PasswordSetupService(
+            setupStore ?? new FakeSetupStore(), new FakePasswords(), email ?? new FakeEmail(), new FakeLog(),
+            new SetupLinkPolicy("https://app.test/", TimeSpan.FromHours(48)), time);
+        return new(store, new FakePasswords(), new FakeSecrets(), setup, new SubscriptionPolicy(30, 3), time);
+    }
 
     [Fact]
     public async Task Onboarding_stores_hashed_password_and_encrypted_key_never_the_plain_values()
@@ -68,8 +78,7 @@ public sealed class TenantOnboardingServiceTests
         var saved = store.Saved!;
         Assert.Equal(actor, store.Actor);
         Assert.Equal(result.TenantId, saved.TenantId);
-        Assert.Equal("hashed(16)", saved.OwnerPasswordHash);
-        Assert.DoesNotContain(result.TemporaryPassword, saved.OwnerPasswordHash);
+        Assert.Equal("hashed(32)", saved.OwnerPasswordHash); // a random value nobody sees: the owner sets theirs from the link
         Assert.DoesNotContain("sk-live-ABCDEFGH1234", System.Text.Encoding.UTF8.GetString(saved.EncryptedApiKey));
         Assert.Contains(result.TenantId.ToString(), System.Text.Encoding.UTF8.GetString(saved.EncryptedApiKey)); // bound to the tenant
         Assert.Equal("1234", saved.ApiKeyHint);
@@ -93,14 +102,43 @@ public sealed class TenantOnboardingServiceTests
     }
 
     [Fact]
-    public async Task Temporary_password_is_random_and_acceptable_under_the_password_policy()
+    public async Task The_gym_starts_with_the_trial_period_and_the_owner_email_is_kept()
     {
-        var first = await Create(new FakeStore()).OnboardAsync(Valid(), Guid.NewGuid(), CancellationToken.None);
-        var second = await Create(new FakeStore()).OnboardAsync(Valid(), Guid.NewGuid(), CancellationToken.None);
+        var store = new FakeStore();
 
-        Assert.NotEqual(first.TemporaryPassword, second.TemporaryPassword);
-        Assert.Equal(16, first.TemporaryPassword.Length);
-        Assert.True(ChangePasswordService.IsAcceptable(first.TemporaryPassword));
+        await Create(store).OnboardAsync(Valid(), Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Equal(new DateOnly(2026, 11, 22), store.Saved!.SubscriptionEndsOn);
+        Assert.Equal("owner@titan.test", store.Saved.OwnerEmail);
+    }
+
+    [Fact]
+    public async Task The_owner_gets_a_one_time_link_and_no_password_by_email()
+    {
+        var email = new FakeEmail();
+        var setupStore = new FakeSetupStore();
+
+        var result = await Create(new FakeStore(), email, setupStore).OnboardAsync(Valid(), Guid.NewGuid(), CancellationToken.None);
+
+        var message = Assert.Single(email.Sent);
+        Assert.True(result.WelcomeEmailSent);
+        Assert.Equal("owner@titan.test", message.To);
+        Assert.Contains("https://app.test/#setup=", message.Body); // fragment: never reaches a server log
+        Assert.Contains("Usuario: owner.titan", message.Body);
+        Assert.Single(setupStore.Tokens);
+        var token = message.Body.Split("#setup=")[1].Split('\n')[0].Trim();
+        Assert.DoesNotContain(token, string.Join(',', setupStore.Tokens.Keys)); // only a hash is stored
+    }
+
+    [Fact]
+    public async Task A_failing_mail_server_does_not_undo_the_gym()
+    {
+        var store = new FakeStore();
+
+        var result = await Create(store, new FakeEmail { Fail = true }).OnboardAsync(Valid(), Guid.NewGuid(), CancellationToken.None);
+
+        Assert.False(result.WelcomeEmailSent);
+        Assert.NotNull(store.Saved);
     }
 
     [Theory]
@@ -118,6 +156,9 @@ public sealed class TenantOnboardingServiceTests
     [InlineData("providerCompanyId", "", "required")]
     [InlineData("legalName", "", "required")]
     [InlineData("name", "", "required")]
+    [InlineData("ownerEmail", "", "required")]
+    [InlineData("ownerEmail", "sin-arroba", "invalid_format")]
+    [InlineData("ownerEmail", "a b@c.d", "invalid_format")]
     public async Task Invalid_input_is_rejected_before_touching_the_store(string field, string value, string code)
     {
         var store = new FakeStore();
@@ -133,6 +174,7 @@ public sealed class TenantOnboardingServiceTests
             "providerApiKey" => c with { ProviderApiKey = value },
             "providerCompanyId" => c with { ProviderCompanyId = value },
             "legalName" => c with { LegalName = value },
+            "ownerEmail" => c with { OwnerEmail = value },
             _ => c with { Name = value },
         });
 

@@ -31,6 +31,7 @@ public sealed class ForwardedHostTests(PostgresFixture db) : IClassFixture<Postg
         var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(host =>
         {
             host.UseEnvironment("Production"); // the tenant header is a development-only shortcut
+            host.UseProductionMailSettings();
             host.UseTestSecrets();
             host.UseSetting("ConnectionStrings:Default", db.AppConnection);
             host.UseSetting("Tenancy:BaseDomain", "fitos.test");

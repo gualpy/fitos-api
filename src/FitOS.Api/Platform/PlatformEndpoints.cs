@@ -2,6 +2,7 @@ using System.Security.Claims;
 using FitOS.Api.Auth;
 using FitOS.Application.Fiscal;
 using FitOS.Application.Onboarding;
+using FitOS.Application.Platform;
 
 namespace FitOS.Api.Platform;
 
@@ -12,6 +13,12 @@ public static class PlatformEndpoints
     {
         var group = app.MapGroup("/platform").RequireAuthorization(AuthPolicies.PlatformAdmin);
         group.MapPost("/tenants", OnboardAsync);
+        group.MapGet("/tenants", ListAsync);
+        group.MapPost("/tenants/{tenantId:guid}/subscription", ExtendAsync);
+        group.MapPost("/tenants/{tenantId:guid}/suspend", (Guid tenantId, ClaimsPrincipal user, PlatformService service, CancellationToken ct) => SetSuspendedAsync(tenantId, true, user, service, ct));
+        group.MapPost("/tenants/{tenantId:guid}/reactivate", (Guid tenantId, ClaimsPrincipal user, PlatformService service, CancellationToken ct) => SetSuspendedAsync(tenantId, false, user, service, ct));
+        group.MapPost("/tenants/{tenantId:guid}/resend-welcome", ResendWelcomeAsync);
+        group.MapGet("/revenue", RevenueAsync);
         group.MapPost("/tenants/{tenantId:guid}/fiscal/test-connection", TestConnectionAsync);
         return group;
     }
@@ -41,6 +48,7 @@ public static class PlatformEndpoints
             request.ProviderApiKey ?? string.Empty,
             request.OwnerUsername ?? string.Empty,
             request.OwnerDisplayName ?? string.Empty,
+            request.OwnerEmail ?? string.Empty,
             request.Environment ?? "test",
             request.SriEstablishment ?? "001",
             request.EmissionPointCode ?? "001");
@@ -49,15 +57,13 @@ public static class PlatformEndpoints
         {
             var result = await onboarding.OnboardAsync(command, actorId, cancellationToken);
 
-            // The response carries the temporary password: it must never be cached or stored by intermediaries.
-            http.Response.Headers.CacheControl = "no-store";
             return Results.Created($"/platform/tenants/{result.TenantId}", new
             {
                 result.TenantId,
                 result.Slug,
                 result.OwnerUserId,
                 result.OwnerUsername,
-                result.TemporaryPassword,
+                result.WelcomeEmailSent,
             });
         }
         catch (OnboardingValidationException ex)
@@ -73,6 +79,60 @@ public static class PlatformEndpoints
                 statusCode: StatusCodes.Status409Conflict);
         }
     }
+
+    private static async Task<IResult> ListAsync(PlatformService service, CancellationToken ct) =>
+        Results.Ok((await service.ListAsync(ct)).Select(t => new
+        {
+            t.Id,
+            t.Name,
+            t.Slug,
+            t.Status,
+            t.EffectiveStatus,
+            subscriptionEndsOn = t.SubscriptionEndsOn.ToString("yyyy-MM-dd"),
+            t.DaysLeft,
+            t.CreatedAt,
+            t.Customers,
+        }));
+
+    private static async Task<IResult> ExtendAsync(Guid tenantId, ExtendRequest body, ClaimsPrincipal user, PlatformService service, CancellationToken ct)
+    {
+        if (!Guid.TryParse(user.FindFirstValue("sub"), out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var ends = await service.ExtendAsync(tenantId, body.Months, body.Amount, actorId, ct);
+        return Results.Ok(new { subscriptionEndsOn = ends.ToString("yyyy-MM-dd") });
+    }
+
+    private static async Task<IResult> SetSuspendedAsync(Guid tenantId, bool suspended, ClaimsPrincipal user, PlatformService service, CancellationToken ct)
+    {
+        if (!Guid.TryParse(user.FindFirstValue("sub"), out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        await service.SetSuspendedAsync(tenantId, suspended, actorId, ct);
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ResendWelcomeAsync(Guid tenantId, PlatformService service, CancellationToken ct)
+    {
+        try
+        {
+            await service.ResendWelcomeAsync(tenantId, ct);
+            return Results.NoContent();
+        }
+        catch (FitOS.Application.Email.EmailDeliveryException)
+        {
+            return Results.Json(
+                new { error = new { code = "email_failed", message = "The mail server did not accept the message." } },
+                statusCode: StatusCodes.Status502BadGateway);
+        }
+    }
+
+    private static async Task<IResult> RevenueAsync(PlatformService service, CancellationToken ct) =>
+        Results.Ok((await service.RevenueAsync(ct)).Select(r => new { month = r.Month.ToString("yyyy-MM"), r.Total, r.Payments }));
 
     private static async Task<IResult> TestConnectionAsync(Guid tenantId, FiscalConnectionService service, CancellationToken cancellationToken)
     {
@@ -104,7 +164,10 @@ public static class PlatformEndpoints
         string? ProviderApiKey,
         string? OwnerUsername,
         string? OwnerDisplayName,
+        string? OwnerEmail,
         string? Environment,
         string? SriEstablishment,
         string? EmissionPointCode);
+
+    public sealed record ExtendRequest(int? Months, decimal? Amount);
 }

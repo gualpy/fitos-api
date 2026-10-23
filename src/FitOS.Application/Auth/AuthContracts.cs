@@ -27,12 +27,18 @@ public sealed record LoginUser(Guid Id, Guid? TenantId, string DisplayName, User
 /// <summary>Opaque renewal token (shown once, only its hash is stored) and when it stops being valid.</summary>
 public sealed record RefreshGrant(string Token, DateTimeOffset ExpiresAt);
 
-/// <summary>Deliberately has no reason: every failure looks the same to the caller.</summary>
-public sealed record LoginResult(AccessToken? Token, LoginUser? User, RefreshGrant? Refresh = null)
+/// <summary>
+/// Deliberately has no reason: every failure looks the same to the caller. The one exception is
+/// <see cref="GymInactive"/>, reported only AFTER the password was proven right, so it reveals nothing to a guesser.
+/// </summary>
+public sealed record LoginResult(AccessToken? Token, LoginUser? User, RefreshGrant? Refresh = null, bool GymInactive = false)
 {
     public bool Succeeded => Token is not null;
 
     public static LoginResult Failed { get; } = new(null, null);
+
+    /// <summary>Right credentials, but the gym's subscription ended or it was suspended.</summary>
+    public static LoginResult GymSuspended { get; } = new(null, null, null, true);
 }
 
 public enum RefreshStatus

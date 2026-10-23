@@ -24,6 +24,15 @@ internal static class TestSettings
         return host;
     }
 
+    /// <summary>What a Production-like host must have to start (welcome links go by e-mail): never actually used to send anything.</summary>
+    public static IWebHostBuilder UseProductionMailSettings(this IWebHostBuilder host)
+    {
+        host.UseSetting("Email:Host", "smtp.invalid");
+        host.UseSetting("Email:From", "fitos@test.invalid");
+        host.UseSetting("App:PublicUrl", "https://app.test");
+        return host;
+    }
+
     /// <summary>Makes the in-memory server see every request as coming from this address.</summary>
     public static IWebHostBuilder UseRemoteIp(this IWebHostBuilder host, string address)
     {
