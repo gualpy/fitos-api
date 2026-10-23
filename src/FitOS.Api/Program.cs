@@ -36,7 +36,7 @@ builder.Services.AddHsts(hsts =>
     hsts.IncludeSubDomains = true;
 });
 
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 
 // Browsers may call the API only from the origins listed in configuration (Cors:AllowedOrigins). Empty = no CORS at all.
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];

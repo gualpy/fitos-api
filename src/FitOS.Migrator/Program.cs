@@ -7,14 +7,16 @@ using FitOS.Migrator;
 //   migrate                                    apply pending SQL scripts
 //   create-platform-admin <username> [name]    create a platform administrator
 //                                              password: FITOS_ADMIN_PASSWORD, else a random one is printed once
+//                                              FITOS_ADMIN_EMAIL (optional): where the login confirmation link is sent
+//   set-platform-email <username> <email>      set or change the e-mail of a platform administrator
 //   seed-dev <gym-slug> <username> <name> [days]  DEV ONLY: a customer with a login, a membership and attendance on every open day
 //                                              needs FITOS_ALLOW_DEV_SEED=1 and FITOS_SEED_PASSWORD (min. 10 chars, letter + non-letter)
 var command = args.FirstOrDefault();
 var connectionString = args.Length > 1 && command is "migrate" ? args[1] : Environment.GetEnvironmentVariable("FITOS_MIGRATE_CONNECTION");
 
-if (command is not ("migrate" or "create-platform-admin" or "seed-dev") || string.IsNullOrWhiteSpace(connectionString))
+if (command is not ("migrate" or "create-platform-admin" or "set-platform-email" or "seed-dev") || string.IsNullOrWhiteSpace(connectionString))
 {
-    Console.Error.WriteLine("Usage: FitOS.Migrator migrate [connection] | create-platform-admin <username> [display name] | seed-dev <gym-slug> <username> <name> [days]");
+    Console.Error.WriteLine("Usage: FitOS.Migrator migrate [connection] | create-platform-admin <username> [display name] | set-platform-email <username> <email> | seed-dev <gym-slug> <username> <name> [days]");
     Console.Error.WriteLine("The connection string comes from FITOS_MIGRATE_CONNECTION (or the 2nd argument of migrate).");
     return 2;
 }
@@ -22,6 +24,25 @@ if (command is not ("migrate" or "create-platform-admin" or "seed-dev") || strin
 if (command == "migrate")
 {
     return MigrationRunner.Run(connectionString) ? 0 : 1;
+}
+
+if (command == "set-platform-email")
+{
+    var address = args.Length > 2 ? args[2].Trim() : string.Empty;
+    if (args.Length < 3 || !System.Text.RegularExpressions.Regex.IsMatch(address, @"^[^@\s]+@[^@\s]+\.[^@\s]+$"))
+    {
+        Console.Error.WriteLine("Usage: set-platform-email <username> <email>");
+        return 2;
+    }
+
+    if (!await PlatformAdminBootstrap.SetEmailAsync(connectionString, args[1].Trim().ToLowerInvariant(), address))
+    {
+        Console.Error.WriteLine($"There is no platform administrator '{args[1]}'.");
+        return 1;
+    }
+
+    Console.WriteLine($"E-mail of '{args[1]}' updated.");
+    return 0;
 }
 
 if (command == "seed-dev")
@@ -70,7 +91,9 @@ var password = Environment.GetEnvironmentVariable("FITOS_ADMIN_PASSWORD");
 var generated = string.IsNullOrEmpty(password);
 password = generated ? TemporaryPassword.Generate() : password;
 
-var created = await PlatformAdminBootstrap.CreateAsync(connectionString, username, displayName, password!, new IdentityPasswordService());
+var adminEmail = Environment.GetEnvironmentVariable("FITOS_ADMIN_EMAIL");
+var created = await PlatformAdminBootstrap.CreateAsync(
+    connectionString, username, displayName, password!, new IdentityPasswordService(), string.IsNullOrWhiteSpace(adminEmail) ? null : adminEmail.Trim());
 if (!created)
 {
     Console.Error.WriteLine($"The user '{username}' already exists.");
@@ -78,6 +101,10 @@ if (!created)
 }
 
 Console.WriteLine($"Platform admin '{username}' created. It must change the password at first login.");
+if (string.IsNullOrWhiteSpace(adminEmail))
+{
+    Console.WriteLine("No e-mail given: the login confirmation link needs one. Run: set-platform-email <username> <email>");
+}
 if (generated)
 {
     Console.WriteLine($"Temporary password (shown once): {password}");

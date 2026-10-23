@@ -9,19 +9,20 @@ namespace FitOS.Infrastructure.Auth;
 /// <summary>Talks to the SECURITY DEFINER functions of migration 0002; the app role cannot read `users` directly here.</summary>
 public sealed class PostgresLoginStore(FitOsDbContext db) : ILoginStore
 {
-    public async Task<LoginRecord?> FindAsync(string? tenantSlug, string username, CancellationToken cancellationToken)
-    {
-        var rows = await db.Database
+    public async Task<LoginRecord?> FindAsync(string? tenantSlug, string username, CancellationToken cancellationToken) =>
+        ToRecord(await db.Database
             .SqlQuery<LoginRow>($"SELECT * FROM auth_find_user({tenantSlug}, {username})")
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken));
 
-        // (tenant, username) is unique, so at most one row; anything else is treated as "not found".
-        if (rows is not [var row])
-        {
-            return null;
-        }
+    public async Task<LoginRecord?> FindByIdAsync(Guid userId, CancellationToken cancellationToken) =>
+        ToRecord(await db.Database
+            .SqlQuery<LoginRow>($"SELECT * FROM auth_find_user_by_id({userId})")
+            .ToListAsync(cancellationToken));
 
-        return new LoginRecord(
+    // (tenant, username) and the id are unique, so at most one row; anything else is treated as "not found".
+    private static LoginRecord? ToRecord(List<LoginRow> rows) => rows is not [var row]
+        ? null
+        : new LoginRecord(
             row.UserId,
             row.TenantId,
             row.PasswordHash,
@@ -32,7 +33,6 @@ public sealed class PostgresLoginStore(FitOsDbContext db) : ILoginStore
             row.IsLocked,
             row.TenantStatus,
             row.MustChangePassword);
-    }
 
     public async Task<bool> RegisterFailureAsync(Guid userId, int maxFailures, TimeSpan lockout, CancellationToken cancellationToken)
     {

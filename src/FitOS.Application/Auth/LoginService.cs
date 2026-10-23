@@ -1,3 +1,5 @@
+using FitOS.Domain.Tenancy;
+
 namespace FitOS.Application.Auth;
 
 /// <summary>
@@ -12,7 +14,8 @@ public sealed class LoginService(
     IAccessTokenIssuer tokens,
     ISessionStore sessions,
     ISecurityLog log,
-    LoginPolicy policy)
+    LoginPolicy policy,
+    LoginChallengeService challenges)
 {
     public async Task<LoginResult> LoginAsync(string? tenantSlug, string username, string password, ClientInfo client, CancellationToken cancellationToken)
     {
@@ -60,13 +63,46 @@ public sealed class LoginService(
             return LoginResult.GymSuspended;
         }
 
-        await store.RegisterSuccessAsync(user.UserId, cancellationToken);
         if (check == PasswordCheck.SuccessRehashNeeded)
         {
             // We hold the right password right now: the one moment a stronger hash can be made.
             await store.UpgradePasswordHashAsync(user.UserId, passwords.Hash(password), cancellationToken);
         }
 
+        // Platform administrators can do anything: a password alone does not get them in. The link goes to their e-mail.
+        if (user.Role == UserRole.PlatformAdmin && challenges.Required)
+        {
+            return await challenges.BeginAsync(user, client, cancellationToken) is { } challenge
+                ? LoginResult.ConfirmationRequired(challenge)
+                : LoginResult.NoConfirmationEmail;
+        }
+
+        return await StartSessionAsync(user, client, cancellationToken);
+    }
+
+    /// <summary>Second step for platform administrators: the e-mailed link plus the secret the browser kept.</summary>
+    public async Task<LoginResult> ConfirmAsync(string link, string secret, ClientInfo client, CancellationToken cancellationToken)
+    {
+        var redeem = await challenges.RedeemAsync(link, secret, client, cancellationToken);
+        if (redeem.Status != ChallengeRedeemStatus.Ok || redeem.UserId is not { } userId)
+        {
+            return redeem.Status == ChallengeRedeemStatus.Expired ? LoginResult.LinkExpired : LoginResult.Failed;
+        }
+
+        // The account may have been deactivated or locked while the link was out.
+        var user = await store.FindByIdAsync(userId, cancellationToken);
+        if (user is null || !user.IsActive || user.IsLocked || user.Role != UserRole.PlatformAdmin)
+        {
+            await FailedAsync(user, "confirmation_refused", client, cancellationToken);
+            return LoginResult.Failed;
+        }
+
+        return await StartSessionAsync(user, client, cancellationToken);
+    }
+
+    private async Task<LoginResult> StartSessionAsync(LoginRecord user, ClientInfo client, CancellationToken cancellationToken)
+    {
+        await store.RegisterSuccessAsync(user.UserId, cancellationToken);
         var (sessionId, refresh) = await sessions.CreateAsync(user.UserId, client.UserAgent, cancellationToken);
         await log.WriteAsync(new SecurityEvent("login_success", user.TenantId, user.UserId, client), cancellationToken);
         return new LoginResult(tokens.Issue(user, sessionId), LoginUser.From(user), refresh);

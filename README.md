@@ -59,6 +59,14 @@ FITOS_TEST_PG="Host=localhost;Username=postgres;Password=$POSTGRES_PASSWORD;Data
 - **Alta de gimnasio:** pide `ownerEmail` y ya no devuelve contraseña temporal. El dueño recibe un correo con un enlace de un solo uso (vence en `Auth:SetupLinkHours`, 48 h) que apunta a `App:PublicUrl` con el token en el fragmento (`/#setup=...`, nunca llega a un log del servidor); solo se guarda su hash. El front lo canjea con `POST /auth/set-password {token, password}`. Si el correo falla, el gimnasio se crea igual (`welcomeEmailSent: false`) y se reenvía desde el panel.
 - **Correo.** `Email:Host`, `Email:Port` (587), `Email:Username`, `Email:Password`, `Email:From`, `Email:FromName`. La clave es un secreto: user-secrets en desarrollo y variable de entorno en producción (`Email__Password`). Con Gmail: `smtp.gmail.com`, puerto 587, usuario y `From` = la cuenta, y una **clave de aplicación** (no la contraseña real). En Development sin servidor de correo, el mensaje (con su enlace) se escribe en el log de la API. Fuera de Development la API **no arranca** sin `Email:Host`/`Email:From` ni sin `App:PublicUrl` (https).
 
+## Confirmación por correo del login de plataforma (hecho)
+Un administrador de plataforma puede todo, así que la contraseña sola no le da sesión:
+1. `POST /auth/login` con usuario y contraseña correctos → `202 {status: "confirmation_required", challengeSecret, expiresAt}` y **ningún token**. Un correo con un enlace de un solo uso (vence en `Auth:ConfirmationMinutes`, 10; trae IP y navegador de quien lo pidió) sale al correo guardado en la cuenta.
+2. El enlace (`{App:PublicUrl}/#confirm=...`) **no basta**: `POST /auth/confirm-login {token, secret}` necesita además el `challengeSecret` que recibió el navegador que hizo el login (el front lo guarda en ese navegador). Abrir el correo en otro dispositivo, o que alguien lo lea, no inicia sesión.
+3. Un intento con el secreto equivocado **quema** el enlace; un login nuevo anula el anterior; solo se guardan hashes. Con la contraseña mal no se envía nada.
+- Sin correo en la cuenta, el login responde `403 confirmation_unavailable`. Se asigna con el Migrator: `set-platform-email <usuario> <correo>`, o `FITOS_ADMIN_EMAIL` al hacer `create-platform-admin`. El correo vive en la base, nunca en el código ni en el repo.
+- `Auth:SkipPlatformConfirmation=true` apaga el paso, **solo en Development**: en cualquier otro entorno se ignora.
+
 ## Alta de gimnasios (hecho)
 Solo administradores de plataforma (`role=platform_admin`, sin `tenant_id`). Orden operativo:
 1. **En SICOFAC (manual):** crear la empresa y que su dueño genere la API key (SICOFAC no permite crear empresas por API).

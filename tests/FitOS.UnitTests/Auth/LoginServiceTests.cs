@@ -30,6 +30,8 @@ public sealed class LoginServiceTests
             return Task.FromResult(user);
         }
 
+        public Task<LoginRecord?> FindByIdAsync(Guid userId, CancellationToken cancellationToken) => Task.FromResult(user);
+
         public Task<bool> RegisterFailureAsync(Guid userId, int maxFailures, TimeSpan lockout, CancellationToken cancellationToken)
         {
             Calls.Add($"failure:{maxFailures}:{lockout.TotalMinutes}");
@@ -100,15 +102,19 @@ public sealed class LoginServiceTests
         }
     }
 
-    private sealed record Rig(LoginService Service, FakeStore Store, FakePasswords Passwords, FakeSessions Sessions, FakeLog Log);
+    private sealed record Rig(LoginService Service, FakeStore Store, FakePasswords Passwords, FakeSessions Sessions, FakeLog Log, FakeEmail Email, FakeChallengeStore Challenges, FixedTime Time);
 
-    private static Rig Build(LoginRecord? user, bool locksNow = false, bool rehashNeeded = false)
+    private static Rig Build(LoginRecord? user, bool locksNow = false, bool rehashNeeded = false, bool confirmPlatform = true, string? adminEmail = "admin@platform.test")
     {
         var store = new FakeStore(user, locksNow);
         var passwords = new FakePasswords(rehashNeeded);
         var sessions = new FakeSessions();
         var log = new FakeLog();
-        return new Rig(new LoginService(store, passwords, new FakeIssuer(), sessions, log, Policy), store, passwords, sessions, log);
+        var time = new FixedTime(new DateTimeOffset(2026, 10, 23, 12, 0, 0, TimeSpan.Zero));
+        var email = new FakeEmail();
+        var challengeStore = new FakeChallengeStore { Email = adminEmail, Now = time.Now };
+        var challenges = new LoginChallengeService(challengeStore, email, log, new LoginChallengePolicy("https://app.test/", TimeSpan.FromMinutes(10), confirmPlatform), time);
+        return new Rig(new LoginService(store, passwords, new FakeIssuer(), sessions, log, Policy, challenges), store, passwords, sessions, log, email, challengeStore, time);
     }
 
     private static Task<LoginResult> Login(Rig rig, string password = "right", string username = "ana") =>
@@ -248,7 +254,7 @@ public sealed class LoginServiceTests
     public async Task Platform_admin_has_no_tenant_status_and_can_log_in()
     {
         var admin = new LoginRecord(Guid.NewGuid(), null, "hash:right", UserRole.PlatformAdmin, "Root", null, true, false, null);
-        var rig = Build(admin);
+        var rig = Build(admin, confirmPlatform: false); // the e-mail step has its own tests
 
         var result = await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None);
 
@@ -383,5 +389,134 @@ public sealed class LoginServiceTests
         await Login(rig, why == "wrong" ? "bad" : "right");
 
         Assert.Null(rig.Store.UpgradedHash);
+    }
+
+    private static LoginRecord PlatformAdmin(bool active = true) =>
+        new(Guid.NewGuid(), null, "hash:right", UserRole.PlatformAdmin, "Root", null, active, false, null);
+
+    private static string LinkIn(FakeEmail email) => email.Sent[^1].Body.Split("#confirm=")[1].Split('\n')[0].Trim();
+
+    [Fact]
+    public async Task A_platform_admin_with_the_right_password_gets_no_session_only_an_emailed_link()
+    {
+        var rig = Build(PlatformAdmin());
+
+        var result = await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.NotNull(result.Challenge);
+        Assert.Empty(rig.Sessions.Created);
+        Assert.DoesNotContain("success", rig.Store.Calls);
+        var message = Assert.Single(rig.Email.Sent);
+        Assert.Equal("admin@platform.test", message.To);
+        Assert.Contains("https://app.test/#confirm=", message.Body);
+        Assert.Contains("203.0.113.5", message.Body);
+        Assert.DoesNotContain(result.Challenge!.Secret, message.Body); // the secret never travels by e-mail
+        Assert.Contains("login_confirmation_sent", rig.Log.Events.Select(e => e.Name));
+    }
+
+    [Fact]
+    public async Task The_link_with_the_browsers_secret_finishes_the_login_once()
+    {
+        var rig = Build(PlatformAdmin());
+        var challenge = (await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None)).Challenge!;
+
+        var done = await rig.Service.ConfirmAsync(LinkIn(rig.Email), challenge.Secret, Client, CancellationToken.None);
+        var again = await rig.Service.ConfirmAsync(LinkIn(rig.Email), challenge.Secret, Client, CancellationToken.None);
+
+        Assert.True(done.Succeeded);
+        Assert.Single(rig.Sessions.Created);
+        Assert.False(again.Succeeded);
+    }
+
+    [Fact]
+    public async Task The_link_alone_or_with_another_secret_does_not_log_in_and_burns_the_link()
+    {
+        var rig = Build(PlatformAdmin());
+        var challenge = (await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None)).Challenge!;
+
+        var other = await rig.Service.ConfirmAsync(LinkIn(rig.Email), "some-other-secret", Client, CancellationToken.None);
+        var late = await rig.Service.ConfirmAsync(LinkIn(rig.Email), challenge.Secret, Client, CancellationToken.None);
+
+        Assert.False(other.Succeeded);
+        Assert.False(late.Succeeded); // the legitimate browser must sign in again
+        Assert.Empty(rig.Sessions.Created);
+        Assert.Contains("login_confirmation_failed", rig.Log.Events.Select(e => e.Name));
+    }
+
+    [Fact]
+    public async Task An_old_link_is_refused_as_expired()
+    {
+        var rig = Build(PlatformAdmin());
+        var challenge = (await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None)).Challenge!;
+        rig.Challenges.Now = rig.Time.Now.AddMinutes(11);
+
+        var result = await rig.Service.ConfirmAsync(LinkIn(rig.Email), challenge.Secret, Client, CancellationToken.None);
+
+        Assert.True(result.ConfirmationExpired);
+        Assert.Empty(rig.Sessions.Created);
+    }
+
+    [Fact]
+    public async Task A_wrong_password_never_sends_an_email()
+    {
+        var rig = Build(PlatformAdmin());
+
+        var result = await rig.Service.LoginAsync(null, "root", "wrong", Client, CancellationToken.None);
+
+        Assert.Null(result.Challenge);
+        Assert.Empty(rig.Email.Sent);
+    }
+
+    [Fact]
+    public async Task A_platform_admin_without_email_cannot_get_in()
+    {
+        var rig = Build(PlatformAdmin(), adminEmail: null);
+
+        var result = await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None);
+
+        Assert.True(result.ConfirmationUnavailable);
+        Assert.False(result.Succeeded);
+        Assert.Empty(rig.Sessions.Created);
+        Assert.Contains("login_confirmation_unavailable", rig.Log.Events.Select(e => e.Name));
+    }
+
+    [Fact]
+    public async Task An_account_deactivated_while_the_link_was_out_cannot_use_it()
+    {
+        var rig = Build(PlatformAdmin(active: true));
+        var challenge = (await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None)).Challenge!;
+        var disabled = Build(PlatformAdmin(active: false));
+        // Same challenge store state, but the store now reports the user as inactive.
+        var service = new LoginService(
+            new FakeStore(PlatformAdmin(active: false)), new FakePasswords(), new FakeIssuer(), disabled.Sessions, disabled.Log, Policy,
+            new LoginChallengeService(rig.Challenges, rig.Email, disabled.Log, new LoginChallengePolicy("https://app.test", TimeSpan.FromMinutes(10), true), rig.Time));
+
+        var result = await service.ConfirmAsync(LinkIn(rig.Email), challenge.Secret, Client, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Empty(disabled.Sessions.Created);
+    }
+
+    [Fact]
+    public async Task With_the_confirmation_switched_off_a_platform_admin_gets_a_session_straight_away()
+    {
+        var rig = Build(PlatformAdmin(), confirmPlatform: false);
+
+        var result = await rig.Service.LoginAsync(null, "root", "right", Client, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Empty(rig.Email.Sent);
+    }
+
+    [Fact]
+    public async Task Gym_users_are_never_asked_for_a_confirmation()
+    {
+        var rig = Build(User());
+
+        var result = await Login(rig);
+
+        Assert.True(result.Succeeded);
+        Assert.Empty(rig.Email.Sent);
     }
 }
