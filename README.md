@@ -127,6 +127,12 @@ Todo va por el token: el gimnasio sale del claim `tenant_id`, nunca de la URL. R
 - **Sin `payments`** es una cortesía y **solo owner y admin** pueden darla (recepción recibe 403: si no, podría regalar planes sin dejar rastro). Una lista `payments` vacía es un error de validación, no una cortesía.
 - Mismas reglas que antes: socio y plan activos, fecha no pasada, y una renovación se encola al terminar la membresía vigente. La respuesta incluye `saleId` y los totales.
 
+## Peso y estatura del socio (hecho)
+
+- `GET|POST /customers/{id}/measurements`, `DELETE /customers/{id}/measurements/{measurementId}`: historial de peso (kg) y estatura (cm) para la gráfica de evolución. Una medida por día: registrar de nuevo el mismo día la reemplaza; no se aceptan fechas futuras.
+- Un socio solo lee y escribe lo suyo (el de otro se ve como inexistente); el personal del gimnasio lo hace para cualquier socio del gimnasio. Tabla `body_measurements` con RLS (migración 0009).
+- La API solo guarda peso y estatura. El IMC y los rangos se calculan en el front.
+
 ## Base de datos de desarrollo
 Una base propia (`fitos-dev`) en el PostgreSQL local, creada con `migrate` (ver Comandos). La API se conecta como `fitos_app` con la cadena en user-secrets (`ConnectionStrings:Default`); la contraseña del administrador solo se usa para migrar y nunca se guarda en el repositorio.
 
