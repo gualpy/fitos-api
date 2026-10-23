@@ -25,6 +25,26 @@ public sealed class PostgresPasswordSetupStore(FitOsDbContext db) : IPasswordSet
         return new SetupRedeem(status, row?.UserId, row?.TenantId);
     }
 
+    public async Task<SetupInfo?> InfoAsync(byte[] tokenHash, CancellationToken cancellationToken)
+    {
+        var row = (await db.Database
+            .SqlQuery<InfoRow>($"SELECT display_name, gym_name, gym_slug FROM auth_setup_token_info({tokenHash})")
+            .ToListAsync(cancellationToken)).FirstOrDefault();
+        return row is null ? null : new SetupInfo(row.DisplayName, row.GymName, row.GymSlug);
+    }
+
+    private sealed class InfoRow
+    {
+        [Column("display_name")]
+        public string DisplayName { get; set; } = string.Empty;
+
+        [Column("gym_name")]
+        public string? GymName { get; set; }
+
+        [Column("gym_slug")]
+        public string? GymSlug { get; set; }
+    }
+
     private sealed class RedeemRow
     {
         [Column("outcome")]

@@ -22,7 +22,13 @@ public interface IPasswordSetupStore
 
     /// <summary>Marks the link as used and sets the password in one step; also closes the user's open sessions.</summary>
     Task<SetupRedeem> RedeemAsync(byte[] tokenHash, string passwordHash, CancellationToken cancellationToken);
+
+    /// <summary>Who the link is for and which gym, without spending it. <c>null</c> = invalid, used or expired.</summary>
+    Task<SetupInfo?> InfoAsync(byte[] tokenHash, CancellationToken cancellationToken);
 }
+
+/// <param name="GymName"><c>null</c> for accounts that belong to no gym.</param>
+public sealed record SetupInfo(string DisplayName, string? GymName, string? GymSlug);
 
 public sealed record WelcomeRecipient(Guid UserId, string Email, string DisplayName, string Username, string GymName, string GymSlug);
 
@@ -56,11 +62,11 @@ public sealed class PasswordSetupService(
         await email.SendAsync(
             new EmailMessage(
                 to.Email,
-                $"Bienvenido a FitOS: crea tu contraseña ({to.GymName})",
+                $"Bienvenido a {to.GymName}: crea tu contraseña",
                 $"""
                 Hola {to.DisplayName},
 
-                Tu gimnasio "{to.GymName}" ya está listo en FitOS.
+                Tu cuenta en {to.GymName} ya está lista.
 
                 Gimnasio (para iniciar sesión): {to.GymSlug}
                 Usuario: {to.Username}
@@ -69,9 +75,13 @@ public sealed class PasswordSetupService(
                 {link}
 
                 Si no esperabas este correo, ignóralo.
-                """),
+                """,
+                to.GymName),
             cancellationToken);
     }
+
+    /// <summary>For the page that opens from the link: whose account and which gym. Spends nothing.</summary>
+    public Task<SetupInfo?> InfoAsync(string token, CancellationToken cancellationToken) => store.InfoAsync(Hash(token), cancellationToken);
 
     public async Task<SetPasswordOutcome> SetPasswordAsync(string token, string newPassword, ClientInfo client, CancellationToken cancellationToken)
     {

@@ -15,7 +15,6 @@ using FitOS.Api.Subscriptions;
 using FitOS.Api.Tenancy;
 using FitOS.Infrastructure;
 using FitOS.Infrastructure.Auth;
-using FitOS.Infrastructure.Email;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -66,12 +65,8 @@ if (builder.Configuration.GetValue<bool>($"{TenancyOptions.Section}:{nameof(Tena
 
 if (!builder.Environment.IsDevelopment())
 {
-    // Welcome links go by e-mail and point at the front: both must be real outside Development.
-    if (!(builder.Configuration.GetSection(EmailOptions.Section).Get<EmailOptions>()?.IsConfigured ?? false))
-    {
-        throw new InvalidOperationException("Email:Host and Email:From must be configured outside Development (welcome links are sent by e-mail).");
-    }
-
+    // Welcome and reset links point at the front end. The mail server itself may come from the panel (database),
+    // so its absence in the environment is not a startup error: a missing one just fails the send with a clear reason.
     if (!Uri.TryCreate(builder.Configuration["App:PublicUrl"], UriKind.Absolute, out var publicUrl) || publicUrl.Scheme != Uri.UriSchemeHttps)
     {
         throw new InvalidOperationException("App:PublicUrl must be the https address of the front end (it goes into welcome e-mails).");

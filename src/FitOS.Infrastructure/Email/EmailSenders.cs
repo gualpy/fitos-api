@@ -1,15 +1,19 @@
 using System.ComponentModel.DataAnnotations;
-using System.Net;
-using System.Net.Mail;
+using System.Text;
+using FitOS.Application.Auth;
 using FitOS.Application.Email;
+using MailKit;
+using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MimeKit;
 
 namespace FitOS.Infrastructure.Email;
 
 /// <summary>
-/// Mail server settings. The password is a secret: user-secrets in development, environment variables in production.
-/// Leave <see cref="Host"/> empty only in Development, where messages are written to the log instead.
+/// FALLBACK mail server settings (environment/user-secrets), used only when the database has none or they fail.
+/// The password is a secret: user-secrets in development, an environment variable in production.
 /// </summary>
 public sealed class EmailOptions
 {
@@ -24,13 +28,13 @@ public sealed class EmailOptions
 
     public string Password { get; init; } = string.Empty;
 
-    /// <summary>Address the messages come from (with Gmail it must be the account itself).</summary>
+    /// <summary>Address the messages come from (it must be the mailbox itself with most providers).</summary>
     public string From { get; init; } = string.Empty;
 
-    public string FromName { get; init; } = "FitOS";
+    public string FromName { get; init; } = EmailSettingsService.DefaultFromName;
 
-    /// <summary>STARTTLS (587) or implicit TLS (465) is always used; never plain text.</summary>
-    public bool EnableSsl { get; init; } = true;
+    /// <summary><c>ssl_on_connect</c> (port 465) or <c>start_tls</c> (port 587).</summary>
+    public string Security { get; init; } = "start_tls";
 
     [Range(1, 120)]
     public int TimeoutSeconds { get; init; } = 20;
@@ -38,46 +42,145 @@ public sealed class EmailOptions
     public bool IsConfigured => Host.Length > 0 && From.Length > 0;
 }
 
-public sealed class SmtpEmailSender(IOptions<EmailOptions> options) : IEmailSender
+/// <summary>Speaks SMTP with MailKit: TLS from the first byte (465) or STARTTLS (587), never plain text.</summary>
+public sealed class MailKitDelivery(IOptions<EmailOptions> options) : ISmtpDelivery
 {
-    public async Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+    public async Task SendAsync(SmtpSettings settings, EmailMessage message, CancellationToken cancellationToken)
     {
-        var settings = options.Value;
+        var mime = Build(settings, message);
+
+        using var client = new SmtpClient { Timeout = options.Value.TimeoutSeconds * 1000 };
         try
         {
-            using var mail = new MailMessage
+            var tls = settings.Security == SmtpSecurity.SslOnConnect ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls;
+            await client.ConnectAsync(settings.Host, settings.Port, tls, cancellationToken);
+            if (settings.Username.Length > 0)
             {
-                From = new MailAddress(settings.From, settings.FromName),
-                Subject = message.Subject,
-                Body = message.Body,
-                IsBodyHtml = false,
-            };
-            mail.To.Add(message.To);
+                await client.AuthenticateAsync(settings.Username, settings.Password, cancellationToken);
+            }
 
-            using var client = new SmtpClient(settings.Host, settings.Port)
-            {
-                EnableSsl = settings.EnableSsl,
-                Timeout = settings.TimeoutSeconds * 1000,
-                Credentials = settings.Username.Length > 0 ? new NetworkCredential(settings.Username, settings.Password) : null,
-            };
-            await client.SendMailAsync(mail, cancellationToken);
+            await client.SendAsync(mime, cancellationToken);
+            await client.DisconnectAsync(true, CancellationToken.None);
         }
-        catch (Exception ex) when (ex is SmtpException or FormatException or InvalidOperationException or IOException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw new EmailDeliveryException("The mail server did not accept the message.", ex);
+            throw;
         }
+        catch (Exception ex)
+        {
+            throw new EmailDeliveryException("The mail server did not accept the message.", ReasonOf(ex), ex);
+        }
+    }
+
+    /// <exception cref="EmailDeliveryException">The recipient address cannot be parsed.</exception>
+    internal static MimeMessage Build(SmtpSettings settings, EmailMessage message)
+    {
+        try
+        {
+            var mime = new MimeMessage();
+            mime.From.Add(new MailboxAddress(CleanName(message.FromName ?? settings.FromName), settings.FromAddress));
+            mime.To.Add(MailboxAddress.Parse(message.To));
+            mime.Subject = CleanLine(message.Subject);
+            mime.Body = new TextPart("plain") { Text = message.Body };
+            return mime;
+        }
+        catch (Exception ex) when (ex is ParseException or FormatException or ArgumentException)
+        {
+            throw new EmailDeliveryException("The address is not valid.", "invalid_address", ex);
+        }
+    }
+
+    private static string ReasonOf(Exception ex) => ex switch
+    {
+        MailKit.Security.AuthenticationException => "auth_failed",
+        SslHandshakeException or System.Security.Authentication.AuthenticationException => "tls_failed",
+        SmtpCommandException { ErrorCode: SmtpErrorCode.SenderNotAccepted or SmtpErrorCode.RecipientNotAccepted or SmtpErrorCode.MessageNotAccepted } => "rejected",
+        SmtpProtocolException or SmtpCommandException or ServiceNotConnectedException or ServiceNotAuthenticatedException => "failed",
+        _ when ex is IOException or TimeoutException or OperationCanceledException or System.Net.Sockets.SocketException => "connection_failed",
+        _ => "failed",
+    };
+
+    /// <summary>A display name is free text (a gym's name): no line breaks (header injection), no control characters, bounded.</summary>
+    internal static string CleanName(string? name)
+    {
+        var cleaned = CleanLine(name ?? string.Empty);
+        return cleaned.Length == 0 ? EmailSettingsService.DefaultFromName : cleaned.Length <= 80 ? cleaned : cleaned[..80];
+    }
+
+    private static string CleanLine(string text)
+    {
+        var sb = new StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            sb.Append(char.IsControl(c) ? ' ' : c);
+        }
+
+        return sb.ToString().Trim();
     }
 }
 
-/// <summary>DEVELOPMENT ONLY: nothing is sent; the message (links included) goes to the log so the flow can be tested.</summary>
-public sealed partial class LogEmailSender(ILogger<LogEmailSender> logger) : IEmailSender
+/// <summary>
+/// The only <see cref="IEmailSender"/>: settings saved in the database first; if there are none (or they fail) the
+/// environment's. In Development with neither, the message goes to the log so the flow can be tried.
+/// </summary>
+public sealed partial class ConfiguredEmailSender(
+    IEmailSettingsStore store,
+    EmailSettingsService settings,
+    ISmtpDelivery delivery,
+    IOptions<EmailOptions> options,
+    ISecurityLog securityLog,
+    ILogger<ConfiguredEmailSender> logger,
+    bool logInsteadOfSending) : IEmailSender
 {
-    public Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+    public async Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
     {
-        LogMessage(logger, message.To, message.Subject, message.Body);
-        return Task.CompletedTask;
+        var fallback = FromEnvironment(options.Value);
+        var stored = await store.GetAsync(cancellationToken);
+        var fromDatabase = stored is null ? null : settings.Decrypt(stored, EmailSettingsService.DefaultFromName);
+
+        if (fromDatabase is not null)
+        {
+            try
+            {
+                await delivery.SendAsync(fromDatabase, message, cancellationToken);
+                return;
+            }
+            catch (EmailDeliveryException ex) when (fallback is not null)
+            {
+                // A wrong password saved in the panel must never lock the platform administrator out of their own login.
+                await securityLog.WriteAsync(
+                    new SecurityEvent("email_settings_fallback", Detail: new Dictionary<string, object?> { ["reason"] = ex.Reason }),
+                    cancellationToken);
+            }
+        }
+        else if (stored is not null)
+        {
+            LogUnreadable(logger);
+        }
+
+        if (fallback is not null)
+        {
+            await delivery.SendAsync(fallback, message, cancellationToken);
+            return;
+        }
+
+        if (logInsteadOfSending && fromDatabase is null)
+        {
+            LogMessage(logger, message.To, message.Subject, message.Body);
+            return;
+        }
+
+        throw new EmailDeliveryException("No mail server is configured.", "not_configured");
     }
+
+    private static SmtpSettings? FromEnvironment(EmailOptions o) =>
+        o.IsConfigured
+            ? new SmtpSettings(o.Host, o.Port, SmtpSecurityWire.TryParse(o.Security, out var security) ? security : SmtpSecurity.StartTls, o.Username, o.Password, o.From, o.FromName)
+            : null;
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "E-mail NOT sent (no mail server configured). To: {To}. Subject: {Subject}.\n{Body}")]
     private static partial void LogMessage(ILogger logger, string to, string subject, string body);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "The mail settings saved in the database cannot be decrypted (was Secrets:EncryptionKey changed?). Save them again from the panel.")]
+    private static partial void LogUnreadable(ILogger logger);
 }

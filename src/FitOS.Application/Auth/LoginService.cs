@@ -1,3 +1,4 @@
+using FitOS.Application.Email;
 using FitOS.Domain.Tenancy;
 
 namespace FitOS.Application.Auth;
@@ -72,9 +73,17 @@ public sealed class LoginService(
         // Platform administrators can do anything: a password alone does not get them in. The link goes to their e-mail.
         if (user.Role == UserRole.PlatformAdmin && challenges.Required)
         {
-            return await challenges.BeginAsync(user, client, cancellationToken) is { } challenge
-                ? LoginResult.ConfirmationRequired(challenge)
-                : LoginResult.NoConfirmationEmail;
+            try
+            {
+                return await challenges.BeginAsync(user, client, cancellationToken) is { } challenge
+                    ? LoginResult.ConfirmationRequired(challenge)
+                    : LoginResult.NoConfirmationEmail;
+            }
+            catch (EmailDeliveryException)
+            {
+                await FailedAsync(user, "confirmation_email_failed", client, cancellationToken);
+                return LoginResult.ConfirmationEmailUnavailable;
+            }
         }
 
         return await StartSessionAsync(user, client, cancellationToken);

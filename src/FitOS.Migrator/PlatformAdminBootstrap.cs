@@ -78,4 +78,26 @@ public static class PlatformAdminBootstrap
         await transaction.CommitAsync(cancellationToken);
         return changed;
     }
+
+    /// <summary>
+    /// Deletes the mail settings saved from the panel, so the environment's (Email__*) take over. For when a wrong
+    /// configuration has to be undone without the panel.
+    /// </summary>
+    /// <returns><c>true</c> if there was something to delete.</returns>
+    public static async Task<bool> ClearEmailSettingsAsync(string connectionString, CancellationToken cancellationToken = default)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var role = new NpgsqlCommand("SET LOCAL ROLE fitos_platform", connection, transaction))
+        {
+            await role.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var delete = new NpgsqlCommand("DELETE FROM email_settings", connection, transaction);
+        var removed = await delete.ExecuteNonQueryAsync(cancellationToken) > 0;
+        await transaction.CommitAsync(cancellationToken);
+        return removed;
+    }
 }

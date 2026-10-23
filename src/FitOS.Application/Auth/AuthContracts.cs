@@ -38,7 +38,8 @@ public sealed record LoginResult(
     bool GymInactive = false,
     LoginChallenge? Challenge = null,
     bool ConfirmationUnavailable = false,
-    bool ConfirmationExpired = false)
+    bool ConfirmationExpired = false,
+    bool ConfirmationEmailFailed = false)
 {
     public bool Succeeded => Token is not null;
 
@@ -52,6 +53,9 @@ public sealed record LoginResult(
 
     /// <summary>Right credentials, but the account has no e-mail to confirm with.</summary>
     public static LoginResult NoConfirmationEmail { get; } = new(null, null, ConfirmationUnavailable: true);
+
+    /// <summary>Right credentials, but the confirmation e-mail could not be sent (mail server down or not configured).</summary>
+    public static LoginResult ConfirmationEmailUnavailable { get; } = new(null, null, ConfirmationEmailFailed: true);
 
     /// <summary>The link was right but too old. Told apart from "invalid" only because the secret already matched.</summary>
     public static LoginResult LinkExpired { get; } = new(null, null, ConfirmationExpired: true);
