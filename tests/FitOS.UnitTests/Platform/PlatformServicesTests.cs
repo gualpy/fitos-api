@@ -52,7 +52,7 @@ public sealed class PlatformServicesTests
     private static PlatformService Service(FakePlatformStore store, FakeEmail? email = null) =>
         new(store, new PasswordSetupService(
             new FakeSetupStore(), new FakePasswords(), email ?? new FakeEmail(), new FakeLog(),
-            new SetupLinkPolicy("https://app.test", TimeSpan.FromHours(48)), new FixedTime(DateTimeOffset.UtcNow)));
+            new SetupLinkPolicy("https://app.test", TimeSpan.FromHours(48), TimeSpan.FromMinutes(60), TimeSpan.FromSeconds(60)), new FixedTime(DateTimeOffset.UtcNow)));
 
     [Theory]
     [InlineData(0, 20, "months")]

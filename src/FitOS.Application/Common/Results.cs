@@ -8,6 +8,12 @@ public sealed class NotFoundException(string entity) : Exception($"{entity} not 
     public string Entity { get; } = entity;
 }
 
+/// <summary>The caller is signed in but may not do this (e.g. a receptionist creating an administrator).</summary>
+public sealed class ForbiddenException(string code) : Exception($"Forbidden: {code}.")
+{
+    public string Code { get; } = code;
+}
+
 /// <summary>A uniqueness or consistency rule refused the change. <see cref="Code"/> is a stable machine code.</summary>
 public sealed class ConflictException(string code) : Exception($"Conflict: {code}.")
 {

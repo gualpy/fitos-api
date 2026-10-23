@@ -25,7 +25,7 @@ public sealed class PasswordSetupServiceTests
         var store = new FakeSetupStore { Now = Start };
         var email = new FakeEmail();
         var log = new FakeLog();
-        return (new PasswordSetupService(store, new FakePasswords(), email, log, new SetupLinkPolicy("https://app.test", TimeSpan.FromHours(48)), time), store, email, log, time);
+        return (new PasswordSetupService(store, new FakePasswords(), email, log, new SetupLinkPolicy("https://app.test", TimeSpan.FromHours(48), TimeSpan.FromMinutes(60), TimeSpan.FromSeconds(60)), time), store, email, log, time);
     }
 
     private static string TokenIn(FakeEmail email) => email.Sent[^1].Body.Split("#setup=")[1].Split('\n')[0].Trim();

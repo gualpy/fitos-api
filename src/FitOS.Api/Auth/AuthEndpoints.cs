@@ -15,6 +15,8 @@ public static class AuthEndpoints
 
     public const string LoginRoute = "/login";
 
+    public const string ForgotPasswordRoute = "/forgot-password";
+
     private const int MaxFieldLength = 200;
 
     public static IEndpointRouteBuilder MapAuth(this IEndpointRouteBuilder app)
@@ -23,6 +25,7 @@ public static class AuthEndpoints
         group.MapPost(LoginRoute, LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/refresh", RefreshAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/confirm-login", ConfirmLoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        group.MapPost(ForgotPasswordRoute, ForgotPasswordAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/setup-info", SetupInfoAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/set-password", SetPasswordAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/logout", LogoutAsync).RequireAuthorization(AuthPolicies.Authenticated);
@@ -109,6 +112,20 @@ public static class AuthEndpoints
             : Error(StatusCodes.Status400BadRequest, "invalid_link", "The link is not valid, was already used, or was opened in another browser. Sign in again.");
     }
 
+    /// <summary>The reply is always 202, whatever happens: it never says whether the gym or the account exists.</summary>
+    private static async Task<IResult> ForgotPasswordAsync(ForgotPasswordRequest request, HttpContext http, TenantHostResolver resolver, PasswordResetService service, CancellationToken cancellationToken)
+    {
+        var identifier = request.Identifier?.Trim() ?? string.Empty;
+        if (identifier.Length == 0 || identifier.Length > MaxFieldLength)
+        {
+            return Error(StatusCodes.Status400BadRequest, "validation_failed", "identifier is required.");
+        }
+
+        var target = resolver.Resolve(http.Request);
+        await service.RequestAsync(target.Kind == TenantTargetKind.Tenant ? target.Slug : null, identifier, ClientOf(http), cancellationToken);
+        return Results.Json(new { status = "accepted" }, statusCode: StatusCodes.Status202Accepted);
+    }
+
     private static async Task<IResult> SetupInfoAsync(SetupInfoRequest request, PasswordSetupService service, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Token) || request.Token.Length > MaxFieldLength)
@@ -117,7 +134,7 @@ public static class AuthEndpoints
         }
 
         return await service.InfoAsync(request.Token.Trim(), cancellationToken) is { } info
-            ? Results.Ok(new { info.DisplayName, info.GymName })
+            ? Results.Ok(new { info.DisplayName, info.GymName, info.Purpose })
             : Error(StatusCodes.Status400BadRequest, "invalid_link", "The link is not valid, was already used or expired.");
     }
 
@@ -233,6 +250,8 @@ public static class AuthEndpoints
     public sealed record RefreshRequest(string? RefreshToken);
 
     public sealed record ConfirmLoginRequest(string? Token, string? Secret);
+
+    public sealed record ForgotPasswordRequest(string? Identifier);
 
     public sealed record SetupInfoRequest(string? Token);
 
