@@ -1,3 +1,4 @@
+using FitOS.Api.Auth;
 using FitOS.Domain.Tenancy;
 using Microsoft.Extensions.Options;
 
@@ -12,6 +13,12 @@ public sealed class TenancyOptions
 
     /// <summary>DEVELOPMENT ONLY: take the tenant from the X-Tenant-Slug header. Refused to start outside Development.</summary>
     public bool AllowTenantHeader { get; init; }
+
+    /// <summary>
+    /// Production-safe, single-domain deployments: on the login request ONLY, take the gym from the X-Tenant-Slug header.
+    /// Every other endpoint still gets its tenant from the JWT claim, so nothing after login depends on it.
+    /// </summary>
+    public bool AllowLoginTenantHeader { get; init; }
 }
 
 public enum TenantTargetKind
@@ -29,18 +36,22 @@ public sealed record TenantTarget(TenantTargetKind Kind, string? Slug = null)
 }
 
 /// <summary>
-/// Decides which tenant a PRE-authentication request (login) is for, from the host name only.
+/// Decides which tenant a PRE-authentication request (login) is for, from the host name or, when allowed, the tenant header.
 /// After login the tenant comes from the JWT claim, never from here.
 /// </summary>
 public sealed class TenantHostResolver(IOptions<TenancyOptions> options)
 {
     public const string TenantHeader = "X-Tenant-Slug";
 
+    public const string LoginPath = AuthEndpoints.GroupPath + AuthEndpoints.LoginRoute;
+
     public TenantTarget Resolve(HttpRequest request)
     {
         var settings = options.Value;
 
-        if (settings.AllowTenantHeader && request.Headers.TryGetValue(TenantHeader, out var header))
+        var headerAllowed = settings.AllowTenantHeader
+            || (settings.AllowLoginTenantHeader && request.Path.Equals(LoginPath, StringComparison.OrdinalIgnoreCase));
+        if (headerAllowed && request.Headers.TryGetValue(TenantHeader, out var header))
         {
             return FromLabel(header.ToString().Trim().ToLowerInvariant());
         }

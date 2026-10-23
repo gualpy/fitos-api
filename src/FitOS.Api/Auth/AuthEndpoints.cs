@@ -11,12 +11,16 @@ public static class AuthEndpoints
 {
     public const string LoginRateLimitPolicy = "login";
 
+    public const string GroupPath = "/auth";
+
+    public const string LoginRoute = "/login";
+
     private const int MaxFieldLength = 200;
 
     public static IEndpointRouteBuilder MapAuth(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/auth");
-        group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        var group = app.MapGroup(GroupPath);
+        group.MapPost(LoginRoute, LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/refresh", RefreshAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/confirm-login", ConfirmLoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/set-password", SetPasswordAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);

@@ -61,7 +61,7 @@ builder.Services.AddSingleton<TenantHostResolver>();
 if (builder.Configuration.GetValue<bool>($"{TenancyOptions.Section}:{nameof(TenancyOptions.AllowTenantHeader)}")
     && !builder.Environment.IsDevelopment())
 {
-    throw new InvalidOperationException("Tenancy:AllowTenantHeader is for Development only; the tenant must come from the host name.");
+    throw new InvalidOperationException("Tenancy:AllowTenantHeader is for Development only; use Tenancy:AllowLoginTenantHeader for a single-domain deployment.");
 }
 
 if (!builder.Environment.IsDevelopment())
