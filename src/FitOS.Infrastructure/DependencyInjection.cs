@@ -35,13 +35,14 @@ using FitOS.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace FitOS.Infrastructure;
 
 public static class DependencyInjection
 {
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         var connectionString = configuration.GetConnectionString("Default")
             ?? throw new InvalidOperationException("ConnectionStrings:Default is not configured (use the fitos_app role, never the owner).");
@@ -93,6 +94,14 @@ public static class DependencyInjection
         });
         services.AddScoped<ISessionStore, PostgresSessionStore>();
         services.AddScoped<SessionService>();
+        // Only Development may turn the platform administrators' e-mail confirmation off; elsewhere the switch is ignored.
+        var skipPlatformConfirmation = configuration.GetValue("Auth:SkipPlatformConfirmation", false) && environment.IsDevelopment();
+        services.AddSingleton(new LoginChallengePolicy(
+            configuration["App:PublicUrl"] ?? string.Empty,
+            TimeSpan.FromMinutes(Math.Clamp(configuration.GetValue("Auth:ConfirmationMinutes", 10), 1, 60)),
+            !skipPlatformConfirmation));
+        services.AddScoped<ILoginChallengeStore, PostgresLoginChallengeStore>();
+        services.AddScoped<LoginChallengeService>();
         services.AddScoped<LoginService>();
         services.AddScoped<IPasswordStore, PostgresPasswordStore>();
         services.AddScoped<ChangePasswordService>();

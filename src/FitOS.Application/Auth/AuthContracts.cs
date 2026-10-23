@@ -31,7 +31,14 @@ public sealed record RefreshGrant(string Token, DateTimeOffset ExpiresAt);
 /// Deliberately has no reason: every failure looks the same to the caller. The one exception is
 /// <see cref="GymInactive"/>, reported only AFTER the password was proven right, so it reveals nothing to a guesser.
 /// </summary>
-public sealed record LoginResult(AccessToken? Token, LoginUser? User, RefreshGrant? Refresh = null, bool GymInactive = false)
+public sealed record LoginResult(
+    AccessToken? Token,
+    LoginUser? User,
+    RefreshGrant? Refresh = null,
+    bool GymInactive = false,
+    LoginChallenge? Challenge = null,
+    bool ConfirmationUnavailable = false,
+    bool ConfirmationExpired = false)
 {
     public bool Succeeded => Token is not null;
 
@@ -39,6 +46,15 @@ public sealed record LoginResult(AccessToken? Token, LoginUser? User, RefreshGra
 
     /// <summary>Right credentials, but the gym's subscription ended or it was suspended.</summary>
     public static LoginResult GymSuspended { get; } = new(null, null, null, true);
+
+    /// <summary>Right credentials of a platform administrator: the login finishes only with the e-mailed link (and this secret).</summary>
+    public static LoginResult ConfirmationRequired(LoginChallenge challenge) => new(null, null, Challenge: challenge);
+
+    /// <summary>Right credentials, but the account has no e-mail to confirm with.</summary>
+    public static LoginResult NoConfirmationEmail { get; } = new(null, null, ConfirmationUnavailable: true);
+
+    /// <summary>The link was right but too old. Told apart from "invalid" only because the secret already matched.</summary>
+    public static LoginResult LinkExpired { get; } = new(null, null, ConfirmationExpired: true);
 }
 
 public enum RefreshStatus
@@ -74,6 +90,8 @@ public interface ILoginStore
 {
     /// <param name="tenantSlug"><c>null</c> = platform administrators.</param>
     Task<LoginRecord?> FindAsync(string? tenantSlug, string username, CancellationToken cancellationToken);
+
+    Task<LoginRecord?> FindByIdAsync(Guid userId, CancellationToken cancellationToken);
 
     /// <returns><c>true</c> when THIS failure is the one that locked the account.</returns>
     Task<bool> RegisterFailureAsync(Guid userId, int maxFailures, TimeSpan lockout, CancellationToken cancellationToken);
