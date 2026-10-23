@@ -36,6 +36,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace FitOS.Infrastructure;
@@ -109,15 +110,18 @@ public static class DependencyInjection
         services.AddOptions<SecretsOptions>().Bind(configuration.GetSection(SecretsOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
         services.AddOptions<EmailOptions>().Bind(configuration.GetSection(EmailOptions.Section)).ValidateDataAnnotations().ValidateOnStart();
-        if (configuration.GetSection(EmailOptions.Section).Get<EmailOptions>()?.IsConfigured == true)
-        {
-            services.AddSingleton<IEmailSender, SmtpEmailSender>();
-        }
-        else
-        {
-            // Without a mail server the message goes to the log: Program.cs refuses to start like this outside Development.
-            services.AddSingleton<IEmailSender, LogEmailSender>();
-        }
+        services.AddSingleton<ISmtpDelivery, MailKitDelivery>();
+        services.AddScoped<IEmailSettingsStore, PostgresEmailSettingsStore>();
+        services.AddScoped<EmailSettingsService>();
+        // Settings saved in the panel first, then the environment's; in Development with neither the message goes to the log.
+        services.AddScoped<IEmailSender>(sp => new ConfiguredEmailSender(
+            sp.GetRequiredService<IEmailSettingsStore>(),
+            sp.GetRequiredService<EmailSettingsService>(),
+            sp.GetRequiredService<ISmtpDelivery>(),
+            sp.GetRequiredService<IOptions<EmailOptions>>(),
+            sp.GetRequiredService<ISecurityLog>(),
+            sp.GetRequiredService<ILogger<ConfiguredEmailSender>>(),
+            environment.IsDevelopment()));
 
         services.AddSingleton(new SetupLinkPolicy(
             configuration["App:PublicUrl"] ?? string.Empty,

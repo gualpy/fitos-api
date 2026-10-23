@@ -17,5 +17,5 @@ set_secret() {
 [[ "${1:-}" == "--rotate" ]] && ROTATE=1
 set_secret "Jwt:SigningKey" "$(openssl rand -base64 48)"
 set_secret "Secrets:EncryptionKey" "$(openssl rand -base64 32)"
-echo "Optional, to send real e-mail in development (a Gmail app password, never the real one): dotnet user-secrets set Email:Host smtp.gmail.com / Email:Username / Email:Password / Email:From --project src/FitOS.Api"
+echo "E-mail: in development, without a mail server, links are written to the API log. To send real mail use the \"Correo\" tab of the platform panel (saved encrypted in the database), or the Email:* user-secrets as a fallback."
 echo "Done. The database password goes in ConnectionStrings:Default (user-secrets or env), never in the repo."

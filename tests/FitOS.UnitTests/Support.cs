@@ -1,5 +1,7 @@
 using FitOS.Application.Auth;
+using System.Security.Cryptography;
 using FitOS.Application.Email;
+using FitOS.Application.Secrets;
 
 namespace FitOS.UnitTests;
 
@@ -65,6 +67,66 @@ internal sealed class FakeSetupStore : IPasswordSetupStore
     }
 
     public DateTimeOffset Now { get; set; } = DateTimeOffset.UtcNow;
+
+    public Task<SetupInfo?> InfoAsync(byte[] tokenHash, CancellationToken cancellationToken)
+    {
+        var valid = Tokens.TryGetValue(Convert.ToHexString(tokenHash), out var token) && !token.Used && token.Expires > Now;
+        return Task.FromResult(valid ? new SetupInfo("Dueño", "Gimnasio Titan", "titan") : null);
+    }
+}
+
+internal sealed class FakeSecretProtector : ISecretProtector
+{
+    public bool Broken { get; set; }
+
+    public byte[] Protect(string plaintext, Guid tenantId) => System.Text.Encoding.UTF8.GetBytes($"enc:{tenantId}:{plaintext}");
+
+    public string Unprotect(byte[] protectedData, Guid tenantId)
+    {
+        var text = System.Text.Encoding.UTF8.GetString(protectedData);
+        var prefix = $"enc:{tenantId}:";
+        if (Broken || !text.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            throw new CryptographicException("cannot decrypt");
+        }
+
+        return text[prefix.Length..];
+    }
+}
+
+internal sealed class FakeEmailSettingsStore : IEmailSettingsStore
+{
+    public StoredEmailSettings? Stored { get; set; }
+
+    public Guid? SavedBy { get; private set; }
+
+    public Task<StoredEmailSettings?> GetAsync(CancellationToken cancellationToken) => Task.FromResult(Stored);
+
+    public Task SaveAsync(string host, int port, SmtpSecurity security, string username, string fromAddress, byte[]? passwordEnc, string? passwordHint, Guid actorId, CancellationToken cancellationToken)
+    {
+        Stored = new StoredEmailSettings(host, port, security, username, fromAddress, passwordEnc ?? Stored?.PasswordEnc, passwordEnc is null ? Stored?.PasswordHint : passwordHint, DateTimeOffset.UtcNow);
+        SavedBy = actorId;
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeSmtp : ISmtpDelivery
+{
+    public List<(SmtpSettings Settings, EmailMessage Message)> Sent { get; } = [];
+
+    /// <summary>Hosts that refuse the message with this reason.</summary>
+    public Dictionary<string, string> FailHosts { get; } = [];
+
+    public Task SendAsync(SmtpSettings settings, EmailMessage message, CancellationToken cancellationToken)
+    {
+        if (FailHosts.TryGetValue(settings.Host, out var reason))
+        {
+            throw new EmailDeliveryException("refused", reason);
+        }
+
+        Sent.Add((settings, message));
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class FakeLog : ISecurityLog

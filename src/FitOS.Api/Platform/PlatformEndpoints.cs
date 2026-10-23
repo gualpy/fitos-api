@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using FitOS.Api.Auth;
 using FitOS.Application.Fiscal;
+using FitOS.Application.Email;
 using FitOS.Application.Onboarding;
 using FitOS.Application.Platform;
 
@@ -19,6 +20,9 @@ public static class PlatformEndpoints
         group.MapPost("/tenants/{tenantId:guid}/reactivate", (Guid tenantId, ClaimsPrincipal user, PlatformService service, CancellationToken ct) => SetSuspendedAsync(tenantId, false, user, service, ct));
         group.MapPost("/tenants/{tenantId:guid}/resend-welcome", ResendWelcomeAsync);
         group.MapGet("/revenue", RevenueAsync);
+        group.MapGet("/email-settings", GetEmailSettingsAsync);
+        group.MapPut("/email-settings", SaveEmailSettingsAsync);
+        group.MapPost("/email-settings/test", TestEmailAsync);
         group.MapPost("/tenants/{tenantId:guid}/fiscal/test-connection", TestConnectionAsync);
         return group;
     }
@@ -134,6 +138,40 @@ public static class PlatformEndpoints
     private static async Task<IResult> RevenueAsync(PlatformService service, CancellationToken ct) =>
         Results.Ok((await service.RevenueAsync(ct)).Select(r => new { month = r.Month.ToString("yyyy-MM"), r.Total, r.Payments }));
 
+    private static async Task<IResult> GetEmailSettingsAsync(EmailSettingsService service, CancellationToken ct) =>
+        Results.Ok(await service.GetAsync(ct));
+
+    private static async Task<IResult> SaveEmailSettingsAsync(EmailSettingsRequest body, ClaimsPrincipal user, EmailSettingsService service, CancellationToken ct)
+    {
+        if (!Guid.TryParse(user.FindFirstValue("sub"), out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        await service.SaveAsync(new EmailSettingsInput(body.Host, body.Port, body.Security, body.Username, body.FromAddress, body.Password), actorId, ct);
+        return Results.Ok(await service.GetAsync(ct));
+    }
+
+    private static async Task<IResult> TestEmailAsync(TestEmailRequest body, ClaimsPrincipal user, EmailSettingsService service, CancellationToken ct)
+    {
+        if (!Guid.TryParse(user.FindFirstValue("sub"), out var actorId))
+        {
+            return Results.Unauthorized();
+        }
+
+        try
+        {
+            await service.SendTestAsync(body.To, actorId, ct);
+            return Results.NoContent();
+        }
+        catch (EmailDeliveryException ex)
+        {
+            return Results.Json(
+                new { error = new { code = "email_failed", message = "The mail server did not accept the message.", reason = ex.Reason } },
+                statusCode: StatusCodes.Status502BadGateway);
+        }
+    }
+
     private static async Task<IResult> TestConnectionAsync(Guid tenantId, FiscalConnectionService service, CancellationToken cancellationToken)
     {
         var result = await service.TestAsync(tenantId, cancellationToken);
@@ -170,4 +208,8 @@ public static class PlatformEndpoints
         string? EmissionPointCode);
 
     public sealed record ExtendRequest(int? Months, decimal? Amount);
+
+    public sealed record EmailSettingsRequest(string? Host, int? Port, string? Security, string? Username, string? FromAddress, string? Password);
+
+    public sealed record TestEmailRequest(string? To);
 }

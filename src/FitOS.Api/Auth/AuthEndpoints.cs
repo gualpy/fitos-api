@@ -19,6 +19,7 @@ public static class AuthEndpoints
         group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/refresh", RefreshAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/confirm-login", ConfirmLoginAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
+        group.MapPost("/setup-info", SetupInfoAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/set-password", SetPasswordAsync).AllowAnonymous().RequireRateLimiting(LoginRateLimitPolicy);
         group.MapPost("/logout", LogoutAsync).RequireAuthorization(AuthPolicies.Authenticated);
         group.MapGet("/me", Me).RequireAuthorization(AuthPolicies.Authenticated);
@@ -62,6 +63,11 @@ public static class AuthEndpoints
                 statusCode: StatusCodes.Status202Accepted);
         }
 
+        if (result.ConfirmationEmailFailed)
+        {
+            return Error(StatusCodes.Status503ServiceUnavailable, "email_unavailable", "The confirmation e-mail could not be sent. Try again in a moment.");
+        }
+
         if (result.ConfirmationUnavailable)
         {
             return Error(StatusCodes.Status403Forbidden, "confirmation_unavailable", "This account has no e-mail to confirm the login. Set one with the Migrator (set-platform-email).");
@@ -97,6 +103,18 @@ public static class AuthEndpoints
         return result.ConfirmationExpired
             ? Error(StatusCodes.Status400BadRequest, "link_expired", "The link expired. Sign in again.")
             : Error(StatusCodes.Status400BadRequest, "invalid_link", "The link is not valid, was already used, or was opened in another browser. Sign in again.");
+    }
+
+    private static async Task<IResult> SetupInfoAsync(SetupInfoRequest request, PasswordSetupService service, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Token) || request.Token.Length > MaxFieldLength)
+        {
+            return Error(StatusCodes.Status400BadRequest, "validation_failed", "token is required.");
+        }
+
+        return await service.InfoAsync(request.Token.Trim(), cancellationToken) is { } info
+            ? Results.Ok(new { info.DisplayName, info.GymName })
+            : Error(StatusCodes.Status400BadRequest, "invalid_link", "The link is not valid, was already used or expired.");
     }
 
     private static async Task<IResult> SetPasswordAsync(SetPasswordRequest request, HttpContext http, PasswordSetupService service, CancellationToken cancellationToken)
@@ -211,6 +229,8 @@ public static class AuthEndpoints
     public sealed record RefreshRequest(string? RefreshToken);
 
     public sealed record ConfirmLoginRequest(string? Token, string? Secret);
+
+    public sealed record SetupInfoRequest(string? Token);
 
     public sealed record SetPasswordRequest(string? Token, string? Password);
 }

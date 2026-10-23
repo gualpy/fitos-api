@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace FitOS.IntegrationTests.Tenancy;
 
-/// <summary>Outside Development the API refuses to start without a real mail server and an https front address.</summary>
+/// <summary>Outside Development the API refuses to start without an https front address (welcome links point at it).</summary>
 public sealed class StartupConfigTests
 {
     private static void Start(Action<Microsoft.AspNetCore.Hosting.IWebHostBuilder> configure)
@@ -19,11 +19,9 @@ public sealed class StartupConfigTests
     }
 
     [Fact]
-    public void Production_without_a_mail_server_does_not_start()
+    public void Production_without_environment_mail_settings_still_starts_because_they_may_live_in_the_database()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() => Start(host => host.UseSetting("App:PublicUrl", "https://app.test")));
-
-        Assert.Contains("Email:Host", ex.Message);
+        Start(host => host.UseSetting("App:PublicUrl", "https://app.test"));
     }
 
     [Theory]
