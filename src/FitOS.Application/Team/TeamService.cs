@@ -56,7 +56,7 @@ public sealed partial class TeamService(IUserStore store, IPasswordService passw
         }
 
         var id = await CreateAccountAsync(name, email, role, null, cancellationToken);
-        return new InviteResult(id, await TrySendAsync(id, name, email, cancellationToken));
+        return new InviteResult(id, await TrySendAsync(id, name, email, WelcomeKind.Staff, RoleLabelOf(role), cancellationToken));
     }
 
     public async Task SetActiveAsync(Actor actor, Guid id, bool active, CancellationToken cancellationToken)
@@ -121,8 +121,15 @@ public sealed partial class TeamService(IUserStore store, IPasswordService passw
             throw new ConflictException("no_email");
         }
 
-        return await TrySendAsync(id, target.DisplayName, target.Email, cancellationToken);
+        return await TrySendAsync(id, target.DisplayName, target.Email, WelcomeKind.Staff, RoleLabelOf(target.Role), cancellationToken);
     }
+
+    private static string? RoleLabelOf(string role) => role switch
+    {
+        "admin" => "administrador",
+        "reception" => "recepción",
+        _ => null,
+    };
 
     internal static void ValidateEmail(ErrorBag errors, string email)
     {
@@ -144,13 +151,13 @@ public sealed partial class TeamService(IUserStore store, IPasswordService passw
     }
 
     /// <summary>The invitation goes out in the gym's name; if the mail server fails the account still exists.</summary>
-    internal async Task<bool> TrySendAsync(Guid userId, string name, string email, CancellationToken cancellationToken)
+    internal async Task<bool> TrySendAsync(Guid userId, string name, string email, WelcomeKind kind, string? roleLabel, CancellationToken cancellationToken)
     {
         var gym = await store.GymAsync(cancellationToken);
         try
         {
             // The person logs in with the e-mail they just received this at, so that is what the message shows.
-            await setup.SendWelcomeAsync(new WelcomeRecipient(userId, email, name, email, gym.Name, gym.Slug), cancellationToken);
+            await setup.SendWelcomeAsync(new WelcomeRecipient(userId, email, name, email, gym.Name, gym.Slug, kind, roleLabel), cancellationToken);
             return true;
         }
         catch (EmailDeliveryException)

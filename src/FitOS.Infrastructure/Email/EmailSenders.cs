@@ -81,7 +81,7 @@ public sealed class MailKitDelivery(IOptions<EmailOptions> options) : ISmtpDeliv
             mime.From.Add(new MailboxAddress(CleanName(message.FromName ?? settings.FromName), settings.FromAddress));
             mime.To.Add(MailboxAddress.Parse(message.To));
             mime.Subject = CleanLine(message.Subject);
-            mime.Body = new TextPart("plain") { Text = message.Body };
+            mime.Body = new BodyBuilder { TextBody = message.Body, HtmlBody = message.Html }.ToMessageBody();
             return mime;
         }
         catch (Exception ex) when (ex is ParseException or FormatException or ArgumentException)

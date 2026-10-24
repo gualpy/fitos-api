@@ -49,24 +49,17 @@ public sealed class LoginChallengeService(ILoginChallengeStore store, IEmailSend
         }
 
         var minutes = (int)policy.Validity.TotalMinutes;
-        await email.SendAsync(
-            new EmailMessage(
-                to,
-                "FitOS: confirma tu inicio de sesión",
-                $"""
-                Hola {user.DisplayName},
-
-                Alguien escribió tu usuario y contraseña de administrador de FitOS.
-
-                Para entrar, abre este enlace EN EL MISMO NAVEGADOR donde iniciaste sesión (sirve una sola vez y vence en {minutes} minutos):
-                {policy.PublicUrl.TrimEnd('/')}/#confirm={link}
-
-                Dirección: {client.Ip ?? "desconocida"}
-                Navegador: {Shorten(client.UserAgent)}
-
-                Si no fuiste tú, no abras el enlace y cambia tu contraseña.
-                """),
-            cancellationToken);
+        var card = new EmailCard(
+            "FitOS",
+            "Confirma que eres tú",
+            [$"Hola {user.DisplayName},", "Alguien escribió tu usuario y contraseña de administrador de FitOS."],
+            "Mensaje de seguridad de FitOS.",
+            [new EmailDetail("Dirección IP", client.Ip ?? "desconocida"), new EmailDetail("Navegador", Shorten(client.UserAgent))],
+            "Confirmar inicio de sesión",
+            $"{policy.PublicUrl.TrimEnd('/')}/#confirm={link}",
+            Warning: $"Abre el enlace **en el mismo navegador** donde iniciaste sesión. Sirve una sola vez y vence en {minutes} minutos.",
+            Note: "Si no fuiste tú, no abras el enlace y cambia tu contraseña.");
+        await email.SendAsync(card.ToMessage(to, "FitOS: confirma tu inicio de sesión"), cancellationToken);
 
         await log.WriteAsync(new SecurityEvent("login_confirmation_sent", user.TenantId, user.UserId, client), cancellationToken);
         return new LoginChallenge(secret, expiresAt);

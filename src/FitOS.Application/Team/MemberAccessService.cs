@@ -1,3 +1,4 @@
+using FitOS.Application.Auth;
 using FitOS.Application.Common;
 
 namespace FitOS.Application.Team;
@@ -37,7 +38,7 @@ public sealed class MemberAccessService(IUserStore store, TeamService team)
         errors.ThrowIfAny();
 
         var id = await team.CreateAccountAsync(customer.Name, address, "customer", customerId, cancellationToken);
-        return new InviteResult(id, await team.TrySendAsync(id, customer.Name, address, cancellationToken));
+        return new InviteResult(id, await team.TrySendAsync(id, customer.Name, address, WelcomeKind.Member, null, cancellationToken));
     }
 
     public async Task<bool> ResendAsync(Guid customerId, CancellationToken cancellationToken)
@@ -54,6 +55,6 @@ public sealed class MemberAccessService(IUserStore store, TeamService team)
             throw new ConflictException("no_email");
         }
 
-        return await team.TrySendAsync(user.UserId, customer.Name, user.Email, cancellationToken);
+        return await team.TrySendAsync(user.UserId, customer.Name, user.Email, WelcomeKind.Member, null, cancellationToken);
     }
 }

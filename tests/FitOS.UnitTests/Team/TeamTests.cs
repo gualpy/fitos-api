@@ -59,7 +59,8 @@ public sealed class TeamTests
         Assert.Equal("h:32", created.PasswordHash); // a random value nobody sees
         var message = Assert.Single(email.Sent);
         Assert.Equal("Gimnasio Titan", message.FromName);
-        Assert.Equal("Bienvenido a Gimnasio Titan: crea tu contraseña", message.Subject);
+        Assert.Equal("Gimnasio Titan te invitó a su equipo", message.Subject);
+        Assert.Contains("recepción", message.Html);
         Assert.Contains("#setup=", message.Body);
     }
 
