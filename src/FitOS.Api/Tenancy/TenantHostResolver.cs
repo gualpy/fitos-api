@@ -45,12 +45,14 @@ public sealed class TenantHostResolver(IOptions<TenancyOptions> options)
 
     public const string LoginPath = AuthEndpoints.GroupPath + AuthEndpoints.LoginRoute;
 
+    public const string ForgotPasswordPath = AuthEndpoints.GroupPath + AuthEndpoints.ForgotPasswordRoute;
+
     public TenantTarget Resolve(HttpRequest request)
     {
         var settings = options.Value;
 
         var headerAllowed = settings.AllowTenantHeader
-            || (settings.AllowLoginTenantHeader && request.Path.Equals(LoginPath, StringComparison.OrdinalIgnoreCase));
+            || (settings.AllowLoginTenantHeader && IsPreAuthPath(request.Path));
         if (headerAllowed && request.Headers.TryGetValue(TenantHeader, out var header))
         {
             return FromLabel(header.ToString().Trim().ToLowerInvariant());
@@ -72,6 +74,10 @@ public sealed class TenantHostResolver(IOptions<TenancyOptions> options)
             ? FromLabel(host[..^(baseDomain.Length + 1)])
             : TenantTarget.Invalid;
     }
+
+    /// <summary>The requests made before there is a session: they must say which gym they mean.</summary>
+    private static bool IsPreAuthPath(PathString path) =>
+        path.Equals(LoginPath, StringComparison.OrdinalIgnoreCase) || path.Equals(ForgotPasswordPath, StringComparison.OrdinalIgnoreCase);
 
     private static TenantTarget FromLabel(string label)
     {

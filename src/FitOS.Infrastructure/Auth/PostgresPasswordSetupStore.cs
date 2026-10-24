@@ -7,8 +7,13 @@ namespace FitOS.Infrastructure.Auth;
 
 public sealed class PostgresPasswordSetupStore(FitOsDbContext db) : IPasswordSetupStore
 {
-    public async Task IssueAsync(Guid userId, byte[] tokenHash, DateTimeOffset expiresAt, CancellationToken cancellationToken) =>
-        await db.Database.ExecuteSqlAsync($"SELECT auth_setup_token_issue({userId}, {tokenHash}, {expiresAt})", cancellationToken);
+    public async Task<bool> IssueAsync(Guid userId, byte[] tokenHash, DateTimeOffset expiresAt, string purpose, TimeSpan minGap, CancellationToken cancellationToken)
+    {
+        var gapSeconds = (int)minGap.TotalSeconds;
+        return (await db.Database
+            .SqlQuery<bool>($"SELECT auth_setup_token_issue({userId}, {tokenHash}, {expiresAt}, {purpose}, {gapSeconds}) AS \"Value\"")
+            .ToListAsync(cancellationToken)).FirstOrDefault();
+    }
 
     public async Task<SetupRedeem> RedeemAsync(byte[] tokenHash, string passwordHash, CancellationToken cancellationToken)
     {
@@ -28,9 +33,9 @@ public sealed class PostgresPasswordSetupStore(FitOsDbContext db) : IPasswordSet
     public async Task<SetupInfo?> InfoAsync(byte[] tokenHash, CancellationToken cancellationToken)
     {
         var row = (await db.Database
-            .SqlQuery<InfoRow>($"SELECT display_name, gym_name, gym_slug FROM auth_setup_token_info({tokenHash})")
+            .SqlQuery<InfoRow>($"SELECT display_name, gym_name, gym_slug, purpose FROM auth_setup_token_info({tokenHash})")
             .ToListAsync(cancellationToken)).FirstOrDefault();
-        return row is null ? null : new SetupInfo(row.DisplayName, row.GymName, row.GymSlug);
+        return row is null ? null : new SetupInfo(row.DisplayName, row.GymName, row.GymSlug, row.Purpose);
     }
 
     private sealed class InfoRow
@@ -43,6 +48,9 @@ public sealed class PostgresPasswordSetupStore(FitOsDbContext db) : IPasswordSet
 
         [Column("gym_slug")]
         public string? GymSlug { get; set; }
+
+        [Column("purpose")]
+        public string Purpose { get; set; } = "welcome";
     }
 
     private sealed class RedeemRow

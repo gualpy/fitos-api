@@ -12,6 +12,7 @@ using FitOS.Api.Security;
 using FitOS.Api.Measurements;
 using FitOS.Api.Settings;
 using FitOS.Api.Subscriptions;
+using FitOS.Api.Team;
 using FitOS.Api.Tenancy;
 using FitOS.Infrastructure;
 using FitOS.Infrastructure.Auth;
@@ -161,6 +162,7 @@ app.MapDashboard();
 app.MapMeasurements();
 app.MapSettings();
 app.MapSubscription();
+app.MapTeam();
 app.MapProducts();
 app.MapSales();
 

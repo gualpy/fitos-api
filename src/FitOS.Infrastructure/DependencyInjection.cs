@@ -7,6 +7,8 @@ using FitOS.Application.Common;
 using FitOS.Application.Email;
 using FitOS.Application.Platform;
 using FitOS.Application.Subscriptions;
+using FitOS.Application.Team;
+using FitOS.Infrastructure.Team;
 using FitOS.Infrastructure.Email;
 using FitOS.Infrastructure.Platform;
 using FitOS.Infrastructure.Subscriptions;
@@ -125,12 +127,22 @@ public static class DependencyInjection
 
         services.AddSingleton(new SetupLinkPolicy(
             configuration["App:PublicUrl"] ?? string.Empty,
-            TimeSpan.FromHours(Math.Clamp(configuration.GetValue("Auth:SetupLinkHours", 48), 1, 168))));
+            TimeSpan.FromHours(Math.Clamp(configuration.GetValue("Auth:SetupLinkHours", 48), 1, 168)),
+            TimeSpan.FromMinutes(Math.Clamp(configuration.GetValue("Auth:ResetLinkMinutes", 60), 5, 1440)),
+            TimeSpan.FromSeconds(Math.Clamp(configuration.GetValue("Auth:ResetMinGapSeconds", 60), 0, 3600))));
         services.AddSingleton(new SubscriptionPolicy(
             Math.Clamp(configuration.GetValue("Subscription:TrialDays", 30), 1, 365),
             Math.Clamp(configuration.GetValue("Subscription:ReminderDays", 3), 0, 60)));
         services.AddScoped<IPasswordSetupStore, PostgresPasswordSetupStore>();
         services.AddScoped<PasswordSetupService>();
+        services.AddSingleton<BackgroundRunner>();
+        services.AddSingleton<IBackgroundWork>(sp => sp.GetRequiredService<BackgroundRunner>());
+        services.AddHostedService(sp => sp.GetRequiredService<BackgroundRunner>());
+        services.AddScoped<IPasswordResetStore, PostgresPasswordResetStore>();
+        services.AddScoped<PasswordResetService>();
+        services.AddScoped<IUserStore, PostgresUserStore>();
+        services.AddScoped<TeamService>();
+        services.AddScoped<MemberAccessService>();
         services.AddScoped<IPlatformStore, PostgresPlatformStore>();
         services.AddScoped<PlatformService>();
         services.AddScoped<ISubscriptionReader, SubscriptionReader>();

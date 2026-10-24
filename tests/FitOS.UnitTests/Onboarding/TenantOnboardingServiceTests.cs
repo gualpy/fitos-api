@@ -63,7 +63,7 @@ public sealed class TenantOnboardingServiceTests
         var time = new FixedTime(Today);
         var setup = new PasswordSetupService(
             setupStore ?? new FakeSetupStore(), new FakePasswords(), email ?? new FakeEmail(), new FakeLog(),
-            new SetupLinkPolicy("https://app.test/", TimeSpan.FromHours(48)), time);
+            new SetupLinkPolicy("https://app.test/", TimeSpan.FromHours(48), TimeSpan.FromMinutes(60), TimeSpan.FromSeconds(60)), time);
         return new(store, new FakePasswords(), new FakeSecrets(), setup, new SubscriptionPolicy(30, 3), time);
     }
 

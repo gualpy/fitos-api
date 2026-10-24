@@ -12,6 +12,7 @@ public sealed class ApplicationExceptionHandler : IExceptionHandler
         var (status, error) = exception switch
         {
             NotFoundException e => (StatusCodes.Status404NotFound, (object)new { code = "not_found", message = $"{e.Entity} not found.", entity = e.Entity }),
+            ForbiddenException e => (StatusCodes.Status403Forbidden, new { code = e.Code, message = "You are not allowed to do this." }),
             ConflictException e => (StatusCodes.Status409Conflict, new { code = e.Code, message = "The request conflicts with existing data." }),
             ValidationFailedException e => (StatusCodes.Status422UnprocessableEntity, new { code = "validation_failed", message = "Invalid data.", details = e.Errors }),
             InsightsUnavailableException => (StatusCodes.Status503ServiceUnavailable, new { code = "insights_unavailable", message = "Insights are not configured on this server." }),

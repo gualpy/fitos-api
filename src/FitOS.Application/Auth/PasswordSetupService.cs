@@ -1,10 +1,14 @@
 using System.Security.Cryptography;
 using FitOS.Application.Email;
+using FitOS.Domain.Tenancy;
 
 namespace FitOS.Application.Auth;
 
 /// <summary>Where the front lives and how long a "create your password" link works.</summary>
-public sealed record SetupLinkPolicy(string PublicUrl, TimeSpan Validity);
+/// <param name="Validity">How long a welcome link works.</param>
+/// <param name="ResetValidity">How long a "forgot my password" link works (shorter: it is asked for on the spot).</param>
+/// <param name="ResetMinGap">The least time between two reset e-mails for the same account.</param>
+public sealed record SetupLinkPolicy(string PublicUrl, TimeSpan Validity, TimeSpan ResetValidity, TimeSpan ResetMinGap);
 
 public enum SetupRedeemStatus
 {
@@ -17,8 +21,12 @@ public sealed record SetupRedeem(SetupRedeemStatus Status, Guid? UserId = null, 
 
 public interface IPasswordSetupStore
 {
-    /// <summary>Stores the hash of a new link and voids the user's earlier unused links.</summary>
-    Task IssueAsync(Guid userId, byte[] tokenHash, DateTimeOffset expiresAt, CancellationToken cancellationToken);
+    /// <summary>
+    /// Stores the hash of a new link and voids the user's earlier unused links. <paramref name="purpose"/> is
+    /// <c>welcome</c> or <c>reset</c>; with a <paramref name="minGap"/> no new link is issued while a recent one exists.
+    /// </summary>
+    /// <returns><c>false</c> when nothing was issued because of the minimum gap.</returns>
+    Task<bool> IssueAsync(Guid userId, byte[] tokenHash, DateTimeOffset expiresAt, string purpose, TimeSpan minGap, CancellationToken cancellationToken);
 
     /// <summary>Marks the link as used and sets the password in one step; also closes the user's open sessions.</summary>
     Task<SetupRedeem> RedeemAsync(byte[] tokenHash, string passwordHash, CancellationToken cancellationToken);
@@ -28,7 +36,17 @@ public interface IPasswordSetupStore
 }
 
 /// <param name="GymName"><c>null</c> for accounts that belong to no gym.</param>
-public sealed record SetupInfo(string DisplayName, string? GymName, string? GymSlug);
+/// <param name="Purpose"><c>welcome</c> (first password) or <c>reset</c> (forgotten password).</param>
+public sealed record SetupInfo(string DisplayName, string? GymName, string? GymSlug, string Purpose);
+
+/// <summary>An account that asked to restore its password.</summary>
+public sealed record ResetTarget(Guid UserId, Guid TenantId, string DisplayName, string? Email, UserRole Role, bool IsActive, string? TenantStatus, string GymName, string GymSlug);
+
+public interface IPasswordResetStore
+{
+    /// <param name="identifier">E-mail (has a <c>@</c>) or username.</param>
+    Task<ResetTarget?> FindAsync(string tenantSlug, string identifier, CancellationToken cancellationToken);
+}
 
 public sealed record WelcomeRecipient(Guid UserId, string Email, string DisplayName, string Username, string GymName, string GymSlug);
 
@@ -55,7 +73,7 @@ public sealed class PasswordSetupService(
     public async Task SendWelcomeAsync(WelcomeRecipient to, CancellationToken cancellationToken)
     {
         var token = Base64Url(RandomNumberGenerator.GetBytes(32));
-        await store.IssueAsync(to.UserId, Hash(token), clock.GetUtcNow().Add(policy.Validity), cancellationToken);
+        await store.IssueAsync(to.UserId, Hash(token), clock.GetUtcNow().Add(policy.Validity), "welcome", TimeSpan.Zero, cancellationToken);
 
         var link = $"{policy.PublicUrl.TrimEnd('/')}/#setup={token}";
         var hours = (int)policy.Validity.TotalHours;
@@ -78,6 +96,52 @@ public sealed class PasswordSetupService(
                 """,
                 to.GymName),
             cancellationToken);
+    }
+
+    /// <summary>
+    /// "I forgot my password": a one-time link, valid <see cref="SetupLinkPolicy.ResetValidity"/>, in the gym's name.
+    /// Runs in the background (nothing about the outcome ever reaches the person who asked).
+    /// </summary>
+    public async Task SendResetAsync(ResetTarget target, CancellationToken cancellationToken)
+    {
+        if (target.Email is null)
+        {
+            return;
+        }
+
+        var token = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var issued = await store.IssueAsync(target.UserId, Hash(token), clock.GetUtcNow().Add(policy.ResetValidity), "reset", policy.ResetMinGap, cancellationToken);
+        if (!issued)
+        {
+            return; // asked again within seconds: the first e-mail is on its way
+        }
+
+        var link = $"{policy.PublicUrl.TrimEnd('/')}/#setup={token}";
+        var minutes = (int)policy.ResetValidity.TotalMinutes;
+        try
+        {
+            await email.SendAsync(
+                new EmailMessage(
+                    target.Email,
+                    $"Restablece tu contraseña en {target.GymName}",
+                    $"""
+                    Hola {target.DisplayName},
+
+                    Alguien pidió restablecer la contraseña de tu cuenta en {target.GymName}.
+
+                    Elige una nueva con este enlace (sirve una sola vez y vence en {minutes} minutos):
+                    {link}
+
+                    Si no fuiste tú, ignora este correo: tu contraseña actual sigue funcionando.
+                    """,
+                    target.GymName),
+                cancellationToken);
+            await log.WriteAsync(new SecurityEvent("password_reset_sent", target.TenantId, target.UserId), cancellationToken);
+        }
+        catch (EmailDeliveryException)
+        {
+            await log.WriteAsync(new SecurityEvent("password_reset_email_failed", target.TenantId, target.UserId), cancellationToken);
+        }
     }
 
     /// <summary>For the page that opens from the link: whose account and which gym. Spends nothing.</summary>
