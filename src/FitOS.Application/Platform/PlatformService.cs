@@ -12,7 +12,8 @@ public sealed record TenantSummary(
     DateOnly SubscriptionEndsOn,
     int DaysLeft,
     DateTimeOffset CreatedAt,
-    long Customers);
+    long Customers,
+    string OwnerState); // "pending" (owner never set a password), "active" or "none"
 
 public sealed record MonthlyRevenue(DateOnly Month, decimal Total, long Payments);
 

@@ -11,10 +11,10 @@ public sealed class PostgresPlatformStore(FitOsDbContext db) : IPlatformStore
     public async Task<IReadOnlyList<TenantSummary>> ListAsync(CancellationToken cancellationToken)
     {
         var rows = await db.Database
-            .SqlQuery<TenantRow>($"SELECT id, name, slug, status, effective_status, subscription_ends_on, days_left, created_at, customers FROM platform_list_tenants()")
+            .SqlQuery<TenantRow>($"SELECT id, name, slug, status, effective_status, subscription_ends_on, days_left, created_at, customers, owner_state FROM platform_list_tenants()")
             .ToListAsync(cancellationToken);
         return rows
-            .Select(r => new TenantSummary(r.Id, r.Name, r.Slug, r.Status, r.EffectiveStatus, DateOnly.FromDateTime(r.SubscriptionEndsOn), r.DaysLeft, r.CreatedAt, r.Customers))
+            .Select(r => new TenantSummary(r.Id, r.Name, r.Slug, r.Status, r.EffectiveStatus, DateOnly.FromDateTime(r.SubscriptionEndsOn), r.DaysLeft, r.CreatedAt, r.Customers, r.OwnerState))
             .ToList();
     }
 
@@ -74,6 +74,9 @@ public sealed class PostgresPlatformStore(FitOsDbContext db) : IPlatformStore
 
         [Column("customers")]
         public long Customers { get; set; }
+
+        [Column("owner_state")]
+        public string OwnerState { get; set; } = string.Empty;
     }
 
     private sealed class RevenueRow
