@@ -240,7 +240,7 @@ public sealed class EmailSettingsApiTests(PostgresFixture db) : IClassFixture<Po
         Assert.Equal("no-reply@support-me.net", settings.FromAddress);
         Assert.Equal("Gimnasio Titan Norte", message.FromName); // the gym, not "FitOS"
         Assert.Equal("Bienvenido a Gimnasio Titan Norte: crea tu contraseña", message.Subject);
-        Assert.DoesNotContain("FitOS", message.Body);
+        Assert.DoesNotContain("FitOS", message.Body.Split("--\n")[0]); // only the footer names the platform
 
         // The page behind the link names the gym and does not spend the link.
         var token = message.Body.Split("#setup=")[1].Split('\n')[0].Trim();

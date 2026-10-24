@@ -48,7 +48,24 @@ public interface IPasswordResetStore
     Task<ResetTarget?> FindAsync(string tenantSlug, string identifier, CancellationToken cancellationToken);
 }
 
-public sealed record WelcomeRecipient(Guid UserId, string Email, string DisplayName, string Username, string GymName, string GymSlug);
+/// <summary>Who the first link is for; it changes the wording of the e-mail.</summary>
+public enum WelcomeKind
+{
+    Owner,
+    Staff,
+    Member,
+}
+
+/// <param name="RoleLabel">For staff: the role they were given, as shown to them ("recepción").</param>
+public sealed record WelcomeRecipient(
+    Guid UserId,
+    string Email,
+    string DisplayName,
+    string Username,
+    string GymName,
+    string GymSlug,
+    WelcomeKind Kind = WelcomeKind.Owner,
+    string? RoleLabel = null);
 
 public enum SetPasswordOutcome
 {
@@ -77,25 +94,7 @@ public sealed class PasswordSetupService(
 
         var link = $"{policy.PublicUrl.TrimEnd('/')}/#setup={token}";
         var hours = (int)policy.Validity.TotalHours;
-        await email.SendAsync(
-            new EmailMessage(
-                to.Email,
-                $"Bienvenido a {to.GymName}: crea tu contraseña",
-                $"""
-                Hola {to.DisplayName},
-
-                Tu cuenta en {to.GymName} ya está lista.
-
-                Gimnasio (para iniciar sesión): {to.GymSlug}
-                Usuario: {to.Username}
-
-                Crea tu contraseña con este enlace (sirve una sola vez y vence en {hours} horas):
-                {link}
-
-                Si no esperabas este correo, ignóralo.
-                """,
-                to.GymName),
-            cancellationToken);
+        await email.SendAsync(WelcomeMessage(to, link, hours), cancellationToken);
     }
 
     /// <summary>
@@ -120,28 +119,60 @@ public sealed class PasswordSetupService(
         var minutes = (int)policy.ResetValidity.TotalMinutes;
         try
         {
-            await email.SendAsync(
-                new EmailMessage(
-                    target.Email,
-                    $"Restablece tu contraseña en {target.GymName}",
-                    $"""
-                    Hola {target.DisplayName},
-
-                    Alguien pidió restablecer la contraseña de tu cuenta en {target.GymName}.
-
-                    Elige una nueva con este enlace (sirve una sola vez y vence en {minutes} minutos):
-                    {link}
-
-                    Si no fuiste tú, ignora este correo: tu contraseña actual sigue funcionando.
-                    """,
-                    target.GymName),
-                cancellationToken);
+            await email.SendAsync(ResetMessage(target, link, minutes), cancellationToken);
             await log.WriteAsync(new SecurityEvent("password_reset_sent", target.TenantId, target.UserId), cancellationToken);
         }
         catch (EmailDeliveryException)
         {
             await log.WriteAsync(new SecurityEvent("password_reset_email_failed", target.TenantId, target.UserId), cancellationToken);
         }
+    }
+
+    private static EmailMessage WelcomeMessage(WelcomeRecipient to, string link, int hours)
+    {
+        var gym = EmailCard.Emphasis(to.GymName);
+        var (subject, title, intro, details) = to.Kind switch
+        {
+            WelcomeKind.Staff => (
+                $"{to.GymName} te invitó a su equipo",
+                "Te sumaron al equipo",
+                $"{gym} te dio acceso{(to.RoleLabel is null ? string.Empty : $" como {EmailCard.Emphasis(to.RoleLabel)}")}. Crea tu contraseña para empezar.",
+                new[] { new EmailDetail("Gimnasio", to.GymSlug), new EmailDetail("Entras con", "este mismo correo") }),
+            WelcomeKind.Member => (
+                $"Tu acceso a la app de {to.GymName}",
+                "Ya tienes acceso a tu cuenta",
+                $"En {gym} activaron tu acceso a la app. Ahí verás tu membresía, tus asistencias y tu progreso.",
+                new[] { new EmailDetail("Gimnasio", to.GymSlug), new EmailDetail("Entras con", "este mismo correo") }),
+            _ => (
+                $"Bienvenido a {to.GymName}: crea tu contraseña",
+                "Tu cuenta está lista",
+                $"Ya puedes administrar {gym}. Crea tu contraseña para entrar por primera vez.",
+                new[] { new EmailDetail("Gimnasio", to.GymSlug), new EmailDetail("Usuario", to.Username) }),
+        };
+
+        var card = new EmailCard(
+            to.GymName,
+            title,
+            [$"Hola {to.DisplayName},", intro],
+            $"Enviado por FitOS en nombre de {to.GymName}.",
+            details,
+            "Crear mi contraseña",
+            link,
+            Note: $"El enlace sirve una sola vez y vence en {hours} horas. Si no esperabas este correo, ignóralo.");
+        return card.ToMessage(to.Email, subject, to.GymName);
+    }
+
+    private static EmailMessage ResetMessage(ResetTarget target, string link, int minutes)
+    {
+        var card = new EmailCard(
+            target.GymName,
+            "Restablece tu contraseña",
+            [$"Hola {target.DisplayName},", $"Pediste cambiar tu contraseña de {EmailCard.Emphasis(target.GymName)}. Usa el botón para elegir una nueva."],
+            $"Enviado por FitOS en nombre de {target.GymName}.",
+            ButtonText: "Elegir nueva contraseña",
+            Url: link,
+            Warning: $"El enlace vence en {minutes} minutos y sirve una sola vez. Si no lo pediste tú, ignora este correo: tu contraseña actual sigue funcionando.");
+        return card.ToMessage(target.Email!, $"Restablece tu contraseña en {target.GymName}", target.GymName);
     }
 
     /// <summary>For the page that opens from the link: whose account and which gym. Spends nothing.</summary>

@@ -177,7 +177,7 @@ public sealed class TeamAndAccessApiTests(PostgresFixture db) : IClassFixture<Po
         Assert.True((await Json(created)).GetProperty("emailSent").GetBoolean());
         var mail = await mailbox.NextAsync("carla@example.test");
         Assert.Equal("Gimnasio Titan Norte", mail.FromName);
-        Assert.Equal("Bienvenido a Gimnasio Titan Norte: crea tu contraseña", mail.Subject);
+        Assert.Equal("Gimnasio Titan Norte te invitó a su equipo", mail.Subject);
         var token = Mailbox.TokenIn(mail);
 
         var info = await Json(await owner.PostAsJsonAsync("/auth/setup-info", new { token }));

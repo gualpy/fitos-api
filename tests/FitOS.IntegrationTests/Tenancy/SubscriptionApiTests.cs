@@ -12,6 +12,9 @@ namespace FitOS.IntegrationTests.Tenancy;
 /// <summary>Subscriptions end to end: automatic expiry, manual suspension, renewals, revenue and the reminder.</summary>
 public sealed class SubscriptionApiTests(PostgresFixture db) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    /// <summary>Test gyms have no settings row, so the database counts their days in UTC (not in the server's own zone, as current_date would).</summary>
+    private static DateTime GymToday() => DateTime.UtcNow.Date;
+
     private const string Password = "Correct-Horse-9!";
 
     private static readonly IdentityPasswordService Hasher = new();
@@ -47,7 +50,7 @@ public sealed class SubscriptionApiTests(PostgresFixture db) : IClassFixture<Pos
         var id = Guid.NewGuid();
         var slug = "s" + id.ToString("N")[..12];
         await db.ScalarAsync(
-            "INSERT INTO tenants (id, name, slug, status, subscription_ends_on) VALUES (@id, 'Gym ' || @slug, @slug, @status, current_date + @days) RETURNING 1",
+            "INSERT INTO tenants (id, name, slug, status, subscription_ends_on) VALUES (@id, 'Gym ' || @slug, @slug, @status, (now() AT TIME ZONE 'UTC')::date + @days) RETURNING 1",
             ("id", id), ("slug", slug), ("status", status), ("days", daysLeft));
         await db.ScalarAsync("INSERT INTO tenant_settings (tenant_id, timezone) VALUES (@id, 'UTC') RETURNING 1", ("id", id));
         return (id, slug);
@@ -117,7 +120,7 @@ public sealed class SubscriptionApiTests(PostgresFixture db) : IClassFixture<Pos
         var first = await Json(await platform.PostAsJsonAsync($"/platform/tenants/{running}/subscription", new { months = 2, amount = 40 }));
         var second = await Json(await platform.PostAsJsonAsync($"/platform/tenants/{lapsed}/subscription", new { months = 1, amount = 20 }));
 
-        var today = DateTime.UtcNow.Date;
+        var today = GymToday();
         Assert.Equal(today.AddDays(10).AddMonths(2).ToString("yyyy-MM-dd"), first.GetProperty("subscriptionEndsOn").GetString());
         Assert.Equal(today.AddMonths(1).ToString("yyyy-MM-dd"), second.GetProperty("subscriptionEndsOn").GetString());
         Assert.Equal("active", await db.ScalarAsync("SELECT status FROM tenants WHERE id = @id", ("id", running))); // paying ends the trial
@@ -140,7 +143,7 @@ public sealed class SubscriptionApiTests(PostgresFixture db) : IClassFixture<Pos
         var revenue = await Json(await platform.GetAsync("/platform/revenue"));
 
         var current = revenue.EnumerateArray().Single();
-        Assert.Equal(DateTime.UtcNow.ToString("yyyy-MM"), current.GetProperty("month").GetString());
+        Assert.Equal(GymToday().ToString("yyyy-MM"), current.GetProperty("month").GetString());
         Assert.Equal(60m, current.GetProperty("total").GetDecimal());
         Assert.Equal(3, current.GetProperty("payments").GetInt32());
     }
@@ -227,7 +230,7 @@ public sealed class SubscriptionApiTests(PostgresFixture db) : IClassFixture<Pos
 
         Assert.Equal(daysLeft, status.GetProperty("daysLeft").GetInt32());
         Assert.Equal(reminder, status.GetProperty("showReminder").GetBoolean());
-        Assert.Equal(DateTime.UtcNow.Date.AddDays(daysLeft).ToString("yyyy-MM-dd"), status.GetProperty("endsOn").GetString());
+        Assert.Equal(GymToday().AddDays(daysLeft).ToString("yyyy-MM-dd"), status.GetProperty("endsOn").GetString());
     }
 
     [SkippableFact]

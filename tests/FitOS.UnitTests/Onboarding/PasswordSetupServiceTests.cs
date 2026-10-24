@@ -94,4 +94,32 @@ public sealed class PasswordSetupServiceTests
 
         Assert.Equal(SetPasswordOutcome.InvalidLink, await service.SetPasswordAsync("no-existe", "una-clave-segura-1", ClientInfo.Unknown, CancellationToken.None));
     }
+
+    [Theory]
+    [InlineData(WelcomeKind.Owner, "Bienvenido a Titan: crea tu contraseña", "Usuario: dueno")]
+    [InlineData(WelcomeKind.Staff, "Titan te invitó a su equipo", "Entras con: este mismo correo")]
+    [InlineData(WelcomeKind.Member, "Tu acceso a la app de Titan", "Entras con: este mismo correo")]
+    public async Task The_welcome_wording_follows_who_it_is_for(WelcomeKind kind, string subject, string detail)
+    {
+        var (service, _, email, _, _) = Create();
+
+        await service.SendWelcomeAsync(Owner with { Kind = kind, RoleLabel = "recepción" }, CancellationToken.None);
+
+        var message = email.Sent[^1];
+        Assert.Equal(subject, message.Subject);
+        Assert.Equal("Titan", message.FromName);
+        Assert.Contains(detail, message.Body);
+        Assert.NotNull(message.Html);
+        Assert.Contains("Titan", message.Html);
+    }
+
+    [Fact]
+    public async Task A_gym_name_with_markup_is_escaped_in_the_html_welcome()
+    {
+        var (service, _, email, _, _) = Create();
+
+        await service.SendWelcomeAsync(Owner with { GymName = "<img src=x onerror=1>" }, CancellationToken.None);
+
+        Assert.DoesNotContain("<img", email.Sent[^1].Html);
+    }
 }

@@ -150,7 +150,13 @@ public sealed partial class EmailSettingsService(
 
         await delivery.SendAsync(
             settings,
-            new EmailMessage(address, "FitOS: prueba de correo", "Este es un mensaje de prueba. Si lo lees, la configuración de correo funciona."),
+            new EmailCard(
+                "FitOS",
+                "La configuración de correo funciona",
+                ["Si lees este mensaje, FitOS puede enviar correos con la configuración guardada en el panel."],
+                "Mensaje de prueba. No hace falta responder.",
+                [new EmailDetail("Servidor", settings.Host), new EmailDetail("Puerto", settings.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)), new EmailDetail("Remitente", settings.FromAddress)])
+                .ToMessage(address, "FitOS: prueba de correo"),
             cancellationToken);
         await log.WriteAsync(new SecurityEvent("email_test_sent", UserId: actorId), cancellationToken);
     }

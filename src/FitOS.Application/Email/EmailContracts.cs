@@ -1,8 +1,9 @@
 namespace FitOS.Application.Email;
 
-/// <summary>A plain-text message. The body may hold one-time links: it is never logged outside Development.</summary>
+/// <summary>A message with a plain-text body and, optionally, an HTML alternative. The body may hold one-time links: it is never logged outside Development.</summary>
 /// <param name="FromName">The sender's display name (a gym's name, say). The address always stays the configured mailbox.</param>
-public sealed record EmailMessage(string To, string Subject, string Body, string? FromName = null);
+/// <param name="Html">The same content as <paramref name="Body"/>, designed. Clients that cannot show it fall back to the text.</param>
+public sealed record EmailMessage(string To, string Subject, string Body, string? FromName = null, string? Html = null);
 
 public interface IEmailSender
 {
