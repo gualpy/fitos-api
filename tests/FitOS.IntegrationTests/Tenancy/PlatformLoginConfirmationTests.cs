@@ -63,6 +63,12 @@ public sealed class PlatformLoginConfirmationTests(PostgresFixture db) : IClassF
     private async Task<string> NewAdmin(string? email)
     {
         var username = "root-" + Guid.NewGuid().ToString("N")[..8];
+        if (email is not null)
+        {
+            // An e-mail belongs to one platform administrator (it is also a way to log in): free it from earlier test admins.
+            await db.ScalarAsync("UPDATE users SET email = NULL WHERE tenant_id IS NULL AND email = @e::citext RETURNING 1", ("e", email));
+        }
+
         Assert.True(await PlatformAdminBootstrap.CreateAsync(db.OwnerConnection, username, "Root", Password, Hasher, email));
         await db.ScalarAsync("UPDATE users SET must_change_password = false WHERE tenant_id IS NULL AND username = @u RETURNING 1", ("u", username));
         return username;
@@ -144,6 +150,24 @@ public sealed class PlatformLoginConfirmationTests(PostgresFixture db) : IClassF
         Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
 
         Assert.False(await PlatformAdminBootstrap.ResetPasswordAsync(db.OwnerConnection, "no-such-admin", "Brand-New-Pass-7!", Hasher));
+    }
+
+    [SkippableFact]
+    public async Task A_platform_administrator_can_log_in_with_the_e_mail_or_the_username()
+    {
+        Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
+        var email = new CapturingEmail();
+        var client = Client(email);
+        var username = await NewAdmin("Boss@Platform.Test");
+
+        var byEmail = await Login(client, "boss@platform.test");
+        var byUsername = await Login(client, username);
+        var wrong = await Login(client, "someone-else@platform.test");
+
+        Assert.Equal(HttpStatusCode.Accepted, byEmail.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, byUsername.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, wrong.StatusCode);
+        Assert.All(email.Sent, m => Assert.Equal("Boss@Platform.Test", m.To));
     }
 
     [SkippableFact]

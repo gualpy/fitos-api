@@ -19,13 +19,19 @@ public interface IBackgroundWork
 /// </summary>
 public sealed class PasswordResetService(IPasswordResetStore store, IBackgroundWork background, ISecurityLog log)
 {
-    public async Task RequestAsync(string? tenantSlug, string identifier, ClientInfo client, CancellationToken cancellationToken)
+    /// <param name="tenantSlug">The gym the person typed.</param>
+    /// <param name="platform">The request is for the platform (no gym): only platform administrators match.</param>
+    public async Task RequestAsync(string? tenantSlug, bool platform, string identifier, ClientInfo client, CancellationToken cancellationToken)
     {
-        // Platform administrators are not reset by e-mail (their login already depends on it); the Migrator does that.
-        var target = tenantSlug is null ? null : await store.FindAsync(tenantSlug, identifier, cancellationToken);
+        var target = platform || tenantSlug is not null
+            ? await store.FindAsync(platform ? null : tenantSlug, identifier, cancellationToken)
+            : null;
 
-        var eligible = target is { IsActive: true, Email: not null, Role: not UserRole.PlatformAdmin }
-            && target.TenantStatus is "active" or "trial";
+        // A gym request never matches a platform administrator (the lookup is by gym), and a platform request matches only them.
+        var eligible = target is { IsActive: true, Email: not null }
+            && (platform
+                ? target.Role == UserRole.PlatformAdmin
+                : target.Role != UserRole.PlatformAdmin && target.TenantStatus is "active" or "trial");
         if (!eligible || target is null)
         {
             // The typed identifier is deliberately not logged: people sometimes type their password in that field.

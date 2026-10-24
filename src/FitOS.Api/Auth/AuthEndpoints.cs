@@ -122,7 +122,7 @@ public static class AuthEndpoints
         }
 
         var target = resolver.Resolve(http.Request);
-        await service.RequestAsync(target.Kind == TenantTargetKind.Tenant ? target.Slug : null, identifier, ClientOf(http), cancellationToken);
+        await service.RequestAsync(target.Kind == TenantTargetKind.Tenant ? target.Slug : null, target.Kind == TenantTargetKind.Platform, identifier, ClientOf(http), cancellationToken);
         return Results.Json(new { status = "accepted" }, statusCode: StatusCodes.Status202Accepted);
     }
 

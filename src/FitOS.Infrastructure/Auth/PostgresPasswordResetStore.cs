@@ -8,7 +8,7 @@ namespace FitOS.Infrastructure.Auth;
 
 public sealed class PostgresPasswordResetStore(FitOsDbContext db) : IPasswordResetStore
 {
-    public async Task<ResetTarget?> FindAsync(string tenantSlug, string identifier, CancellationToken cancellationToken)
+    public async Task<ResetTarget?> FindAsync(string? tenantSlug, string identifier, CancellationToken cancellationToken)
     {
         var rows = await db.Database
             .SqlQuery<Row>($"SELECT user_id, tenant_id, display_name, email, role, is_active, tenant_status, gym_name, gym_slug FROM auth_find_user_for_reset({tenantSlug}, {identifier})")
@@ -26,7 +26,7 @@ public sealed class PostgresPasswordResetStore(FitOsDbContext db) : IPasswordRes
         public Guid UserId { get; set; }
 
         [Column("tenant_id")]
-        public Guid TenantId { get; set; }
+        public Guid? TenantId { get; set; }
 
         [Column("display_name")]
         public string DisplayName { get; set; } = string.Empty;

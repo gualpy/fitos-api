@@ -270,7 +270,7 @@ internal sealed class FakeResetStore : IPasswordResetStore
 
     public string? AskedIdentifier { get; private set; }
 
-    public Task<ResetTarget?> FindAsync(string tenantSlug, string identifier, CancellationToken cancellationToken)
+    public Task<ResetTarget?> FindAsync(string? tenantSlug, string identifier, CancellationToken cancellationToken)
     {
         AskedSlug = tenantSlug;
         AskedIdentifier = identifier;
