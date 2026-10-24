@@ -76,6 +76,7 @@ Un administrador de plataforma puede todo, así que la contraseña sola no le da
 2. El enlace (`{App:PublicUrl}/#confirm=...`) **no basta**: `POST /auth/confirm-login {token, secret}` necesita además el `challengeSecret` que recibió el navegador que hizo el login (el front lo guarda en ese navegador). Abrir el correo en otro dispositivo, o que alguien lo lea, no inicia sesión.
 3. Un intento con el secreto equivocado **quema** el enlace; un login nuevo anula el anterior; solo se guardan hashes. Con la contraseña mal no se envía nada.
 - Sin correo en la cuenta, el login responde `403 confirmation_unavailable`. Se asigna con el Migrator: `set-platform-email <usuario> <correo>`, o `FITOS_ADMIN_EMAIL` al hacer `create-platform-admin`. El correo vive en la base, nunca en el código ni en el repo.
+- **Contraseña perdida:** "¿Olvidaste tu contraseña?" excluye a los administradores de plataforma a propósito. Con acceso al servidor: `FitOS.Migrator reset-platform-password <usuario>` (la contraseña sale de `FITOS_ADMIN_PASSWORD`, o se genera una y se muestra una sola vez). Debe cambiarse en el próximo ingreso, cierra todas las sesiones, levanta un bloqueo por intentos y anula un enlace de confirmación pendiente; queda registrado como `platform_password_reset`.
 - `Auth:SkipPlatformConfirmation=true` apaga el paso, **solo en Development**: en cualquier otro entorno se ignora.
 
 ## Un solo dominio en producción (`AllowLoginTenantHeader`)

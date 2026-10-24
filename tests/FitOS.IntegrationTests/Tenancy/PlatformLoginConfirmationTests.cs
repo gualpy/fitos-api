@@ -112,6 +112,41 @@ public sealed class PlatformLoginConfirmationTests(PostgresFixture db) : IClassF
     }
 
     [SkippableFact]
+    public async Task Resetting_a_lost_password_replaces_it_ends_sessions_lifts_lockout_and_burns_pending_links()
+    {
+        Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
+        var email = new CapturingEmail();
+        var client = Client(email);
+        var username = await NewAdmin("admin@platform.test");
+        var secret = (await Json(await Login(client, username))).GetProperty("challengeSecret").GetString()!;
+        var pendingLink = LinkIn(email);
+        await db.ScalarAsync(
+            "INSERT INTO auth_sessions (user_id, expires_at) SELECT id, now() + interval '1 day' FROM users WHERE tenant_id IS NULL AND username = @u RETURNING 1",
+            ("u", username));
+        await db.ScalarAsync("UPDATE users SET failed_login_count = 5, locked_until = now() + interval '1 hour' WHERE tenant_id IS NULL AND username = @u RETURNING 1", ("u", username));
+
+        Assert.True(await PlatformAdminBootstrap.ResetPasswordAsync(db.OwnerConnection, username, "Brand-New-Pass-7!", Hasher));
+
+        Assert.Equal(true, await db.ScalarAsync("SELECT must_change_password FROM users WHERE tenant_id IS NULL AND username = @u", ("u", username)));
+        Assert.Equal(0, await db.ScalarAsync("SELECT failed_login_count FROM users WHERE tenant_id IS NULL AND username = @u", ("u", username)));
+        Assert.Equal(0L, await db.ScalarAsync("SELECT count(*) FROM auth_sessions s JOIN users u ON u.id = s.user_id WHERE u.username = @u AND s.revoked_at IS NULL", ("u", username)));
+        Assert.Equal(1L, await db.ScalarAsync("SELECT count(*) FROM security_events e JOIN users u ON u.id = e.user_id WHERE u.username = @u AND e.event = 'platform_password_reset'", ("u", username)));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Login(client, username, Password)).StatusCode); // the old one is gone
+        Assert.Equal(HttpStatusCode.Accepted, (await Login(client, username, "Brand-New-Pass-7!")).StatusCode); // the new one reaches the e-mail step
+        var burned = await client.PostAsJsonAsync("/auth/confirm-login", new { token = pendingLink, secret });
+        Assert.Equal(HttpStatusCode.BadRequest, burned.StatusCode);
+    }
+
+    [SkippableFact]
+    public async Task Resetting_a_password_touches_only_platform_administrators()
+    {
+        Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
+
+        Assert.False(await PlatformAdminBootstrap.ResetPasswordAsync(db.OwnerConnection, "no-such-admin", "Brand-New-Pass-7!", Hasher));
+    }
+
+    [SkippableFact]
     public async Task The_link_opened_elsewhere_without_the_secret_does_not_log_in_and_is_burned()
     {
         Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");

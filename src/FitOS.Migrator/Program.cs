@@ -8,6 +8,8 @@ using FitOS.Migrator;
 //   create-platform-admin <username> [name]    create a platform administrator
 //                                              password: FITOS_ADMIN_PASSWORD, else a random one is printed once
 //                                              FITOS_ADMIN_EMAIL (optional): where the login confirmation link is sent
+//   reset-platform-password <username>         new password for a platform administrator who lost theirs (FITOS_ADMIN_PASSWORD, else
+//                                              a random one is printed once); it must be changed at the next login, sessions end
 //   set-platform-email <username> <email>      set or change the e-mail of a platform administrator
 //   clear-email-settings                       delete the mail settings saved from the panel (the Email__* environment ones take over)
 //   seed-dev <gym-slug> <username> <name> [days]  DEV ONLY: a customer with a login, a membership and attendance on every open day
@@ -15,9 +17,9 @@ using FitOS.Migrator;
 var command = args.FirstOrDefault();
 var connectionString = args.Length > 1 && command is "migrate" ? args[1] : Environment.GetEnvironmentVariable("FITOS_MIGRATE_CONNECTION");
 
-if (command is not ("migrate" or "create-platform-admin" or "set-platform-email" or "clear-email-settings" or "seed-dev") || string.IsNullOrWhiteSpace(connectionString))
+if (command is not ("migrate" or "create-platform-admin" or "reset-platform-password" or "set-platform-email" or "clear-email-settings" or "seed-dev") || string.IsNullOrWhiteSpace(connectionString))
 {
-    Console.Error.WriteLine("Usage: FitOS.Migrator migrate [connection] | create-platform-admin <username> [display name] | set-platform-email <username> <email> | clear-email-settings | seed-dev <gym-slug> <username> <name> [days]");
+    Console.Error.WriteLine("Usage: FitOS.Migrator migrate [connection] | create-platform-admin <username> [display name] | reset-platform-password <username> | set-platform-email <username> <email> | clear-email-settings | seed-dev <gym-slug> <username> <name> [days]");
     Console.Error.WriteLine("The connection string comes from FITOS_MIGRATE_CONNECTION (or the 2nd argument of migrate).");
     return 2;
 }
@@ -32,6 +34,38 @@ if (command == "clear-email-settings")
     Console.WriteLine(await PlatformAdminBootstrap.ClearEmailSettingsAsync(connectionString)
         ? "Mail settings deleted: the Email__* environment settings are used now."
         : "There were no mail settings saved in the database.");
+    return 0;
+}
+
+if (command == "reset-platform-password")
+{
+    if (args.Length < 2)
+    {
+        Console.Error.WriteLine("Usage: reset-platform-password <username>");
+        return 2;
+    }
+
+    var chosen = Environment.GetEnvironmentVariable("FITOS_ADMIN_PASSWORD");
+    var random = string.IsNullOrEmpty(chosen);
+    if (!random && !ChangePasswordService.IsAcceptable(chosen!))
+    {
+        Console.Error.WriteLine("FITOS_ADMIN_PASSWORD must be 10+ chars with a letter and a non-letter.");
+        return 2;
+    }
+
+    var fresh = random ? TemporaryPassword.Generate() : chosen!;
+    if (!await PlatformAdminBootstrap.ResetPasswordAsync(connectionString, args[1].Trim().ToLowerInvariant(), fresh, new IdentityPasswordService()))
+    {
+        Console.Error.WriteLine($"There is no platform administrator '{args[1]}'.");
+        return 1;
+    }
+
+    Console.WriteLine($"Password of '{args[1]}' reset. It must be changed at the next login; every open session was closed.");
+    if (random)
+    {
+        Console.WriteLine($"Temporary password (shown once): {fresh}");
+    }
+
     return 0;
 }
 

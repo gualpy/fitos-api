@@ -54,6 +54,66 @@ public static class PlatformAdminBootstrap
         return true;
     }
 
+    /// <summary>
+    /// Sets a new password for a platform administrator who lost theirs (they cannot use "forgot my password": that is
+    /// refused on purpose for the most powerful accounts). The new one must be changed at the next login, every open
+    /// session ends, a failed-attempts lockout is lifted and a pending login link stops working. The event is recorded.
+    /// </summary>
+    /// <returns><c>false</c> if there is no such platform administrator.</returns>
+    public static async Task<bool> ResetPasswordAsync(
+        string connectionString,
+        string username,
+        string temporaryPassword,
+        IPasswordService passwords,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var role = new NpgsqlCommand("SET LOCAL ROLE fitos_platform", connection, transaction))
+        {
+            await role.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        Guid userId;
+        await using (var update = new NpgsqlCommand(
+            """
+            UPDATE users
+               SET password_hash = @hash, must_change_password = true, failed_login_count = 0, locked_until = NULL
+             WHERE tenant_id IS NULL AND role = 'platform_admin' AND username = @username
+            RETURNING id
+            """,
+            connection,
+            transaction))
+        {
+            update.Parameters.AddWithValue("hash", passwords.Hash(temporaryPassword));
+            update.Parameters.AddWithValue("username", username);
+            if (await update.ExecuteScalarAsync(cancellationToken) is not Guid id)
+            {
+                return false;
+            }
+
+            userId = id;
+        }
+
+        await using (var close = new NpgsqlCommand(
+            """
+            UPDATE auth_sessions SET revoked_at = now(), revoked_reason = 'password_reset' WHERE user_id = @id AND revoked_at IS NULL;
+            UPDATE login_challenges SET used_at = now() WHERE user_id = @id AND used_at IS NULL;
+            INSERT INTO security_events (user_id, event) VALUES (@id, 'platform_password_reset');
+            """,
+            connection,
+            transaction))
+        {
+            close.Parameters.AddWithValue("id", userId);
+            await close.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return true;
+    }
+
     /// <summary>Sets the e-mail the confirmation link of a platform administrator is sent to.</summary>
     /// <returns><c>false</c> if there is no such platform administrator.</returns>
     public static async Task<bool> SetEmailAsync(string connectionString, string username, string email, CancellationToken cancellationToken = default)
