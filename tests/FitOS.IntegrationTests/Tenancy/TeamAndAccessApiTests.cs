@@ -5,6 +5,7 @@ using System.Text.Json;
 using FitOS.Api.Tenancy;
 using FitOS.Application.Email;
 using FitOS.Infrastructure.Auth;
+using FitOS.Migrator;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -369,6 +370,38 @@ public sealed class TeamAndAccessApiTests(PostgresFixture db) : IClassFixture<Po
         using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/forgot-password") { Content = JsonContent.Create(new { identifier }) };
         request.Headers.Add(TenantHostResolver.TenantHeader, slug);
         return await client.SendAsync(request);
+    }
+
+    [SkippableFact]
+    public async Task A_platform_administrator_can_recover_the_password_by_e_mail_and_a_gym_request_cannot_reach_them()
+    {
+        Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
+        var username = "root-" + Guid.NewGuid().ToString("N")[..8];
+        var address = $"{username}@platform.test";
+        Assert.True(await PlatformAdminBootstrap.CreateAsync(db.OwnerConnection, username, "Root", "Old-Password-1!", Hasher, address));
+        var (_, gymSlug) = await NewGym();
+        var mailbox = new Mailbox();
+        var client = Client(mailbox);
+
+        // Typing the platform's gym is the only way in; naming a real gym never matches a platform account.
+        Assert.Equal(HttpStatusCode.Accepted, (await Forgot(client, gymSlug, address)).StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, (await Forgot(client, gymSlug, username)).StatusCode);
+        await Task.Delay(300);
+        Assert.Equal(0, mailbox.CountFor(address));
+
+        Assert.Equal(HttpStatusCode.Accepted, (await Forgot(client, "platform", address.ToUpperInvariant())).StatusCode);
+        var mail = await mailbox.NextAsync(address);
+        Assert.Equal("FitOS: restablece tu contraseña de administrador", mail.Subject);
+        Assert.Contains("15 minutos", mail.Body);
+        var token = Mailbox.TokenIn(mail);
+        var info = await Json(await client.PostAsJsonAsync("/auth/setup-info", new { token }));
+        Assert.Equal("reset", info.GetProperty("purpose").GetString());
+
+        Assert.Equal(HttpStatusCode.NoContent, (await client.PostAsJsonAsync("/auth/set-password", new { token, password = NewPassword })).StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await Login(client, "platform", username, "Old-Password-1!")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await Login(client, "platform", username, NewPassword)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync("/auth/set-password", new { token, password = "Another-Pass-88" })).StatusCode); // one use
     }
 
     [SkippableFact]

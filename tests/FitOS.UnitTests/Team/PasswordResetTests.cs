@@ -22,7 +22,7 @@ public sealed class PasswordResetTests
 
     private static ResetTarget Target(
         bool active = true, string? email = "ana@example.test", UserRole role = UserRole.Reception, string? status = "active") =>
-        new(Guid.NewGuid(), Guid.NewGuid(), "Ana", email, role, active, status, "Gimnasio Titan", "titan");
+        new(Guid.NewGuid(), role == UserRole.PlatformAdmin ? null : Guid.NewGuid(), "Ana", email, role, active, status, "Gimnasio Titan", "titan");
 
     private static (PasswordResetService Service, FakeResetStore Store, FakeEmail Email, FakeLog Log, FakeSetupStore Tokens, FixedTime Time, ImmediateBackground Background) Build()
     {
@@ -44,7 +44,7 @@ public sealed class PasswordResetTests
         var (service, store, email, log, tokens, _, _) = Build();
         store.Target = Target();
 
-        await service.RequestAsync("titan", "ana@example.test", Client, CancellationToken.None);
+        await service.RequestAsync("titan", false, "ana@example.test", Client, CancellationToken.None);
 
         var message = Assert.Single(email.Sent);
         Assert.Equal("ana@example.test", message.To);
@@ -77,7 +77,7 @@ public sealed class PasswordResetTests
             _ => Target(status: "expired"),
         };
 
-        await service.RequestAsync("titan", "mi-clave-secreta-1", Client, CancellationToken.None);
+        await service.RequestAsync("titan", false, "mi-clave-secreta-1", Client, CancellationToken.None);
 
         Assert.Empty(email.Sent);
         Assert.Empty(tokens.Tokens);
@@ -92,7 +92,7 @@ public sealed class PasswordResetTests
         var (service, store, email, _, _, _, _) = Build();
         store.Target = Target();
 
-        await service.RequestAsync(null, "ana@example.test", Client, CancellationToken.None);
+        await service.RequestAsync(null, false, "ana@example.test", Client, CancellationToken.None);
 
         Assert.Null(store.AskedSlug);
         Assert.Empty(email.Sent);
@@ -104,13 +104,13 @@ public sealed class PasswordResetTests
         var (service, store, email, _, tokens, time, _) = Build();
         store.Target = Target();
 
-        await service.RequestAsync("titan", "ana@example.test", Client, CancellationToken.None);
-        await service.RequestAsync("titan", "ana@example.test", Client, CancellationToken.None);
+        await service.RequestAsync("titan", false, "ana@example.test", Client, CancellationToken.None);
+        await service.RequestAsync("titan", false, "ana@example.test", Client, CancellationToken.None);
         Assert.Single(email.Sent);
 
         time.Now = time.Now.AddSeconds(61);
         tokens.Now = time.Now;
-        await service.RequestAsync("titan", "ana@example.test", Client, CancellationToken.None);
+        await service.RequestAsync("titan", false, "ana@example.test", Client, CancellationToken.None);
         Assert.Equal(2, email.Sent.Count);
         Assert.Single(tokens.Tokens); // the first link is no longer valid
     }
@@ -126,8 +126,43 @@ public sealed class PasswordResetTests
             new SetupLinkPolicy("https://app.test", TimeSpan.FromHours(48), TimeSpan.FromMinutes(60), TimeSpan.Zero), new FixedTime(DateTimeOffset.UtcNow));
         var failingService = new PasswordResetService(store, new ImmediateBackground(_ => setup), log);
 
-        await failingService.RequestAsync("titan", "ana@example.test", Client, CancellationToken.None);
+        await failingService.RequestAsync("titan", false, "ana@example.test", Client, CancellationToken.None);
 
         Assert.Contains("password_reset_email_failed", log.Events.Select(e => e.Name));
+    }
+
+    [Fact]
+    public async Task A_platform_administrator_gets_a_short_lived_link_in_fitos_name()
+    {
+        var (service, store, email, log, tokens, _, _) = Build();
+        store.Target = Target(role: UserRole.PlatformAdmin, status: null) with { GymName = "FitOS", GymSlug = "platform" };
+
+        await service.RequestAsync(null, true, "root@example.test", Client, CancellationToken.None);
+
+        Assert.Null(store.AskedSlug); // the lookup is among platform administrators
+        var message = Assert.Single(email.Sent);
+        Assert.Equal("FitOS: restablece tu contraseña de administrador", message.Subject);
+        Assert.Null(message.FromName);
+        Assert.Contains("15 minutos", message.Body);
+        Assert.DoesNotContain("60 minutos", message.Body);
+        Assert.Contains("https://app.test/#setup=", message.Body);
+        Assert.Equal("reset", Assert.Single(tokens.Tokens.Values).Purpose);
+        Assert.Equal(["password_reset_requested", "password_reset_sent"], log.Events.Select(e => e.Name).ToArray());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_platform_request_ignores_gym_accounts_and_inactive_or_mailless_administrators(bool gymAccount)
+    {
+        var (service, store, email, log, _, _, _) = Build();
+        store.Target = gymAccount
+            ? Target()
+            : Target(role: UserRole.PlatformAdmin, email: null, status: null);
+
+        await service.RequestAsync(null, true, "someone", Client, CancellationToken.None);
+
+        Assert.Empty(email.Sent);
+        Assert.Equal(["password_reset_ignored"], log.Events.Select(e => e.Name).ToArray());
     }
 }

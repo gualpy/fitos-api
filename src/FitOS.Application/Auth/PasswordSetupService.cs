@@ -40,12 +40,13 @@ public interface IPasswordSetupStore
 public sealed record SetupInfo(string DisplayName, string? GymName, string? GymSlug, string Purpose);
 
 /// <summary>An account that asked to restore its password.</summary>
-public sealed record ResetTarget(Guid UserId, Guid TenantId, string DisplayName, string? Email, UserRole Role, bool IsActive, string? TenantStatus, string GymName, string GymSlug);
+public sealed record ResetTarget(Guid UserId, Guid? TenantId, string DisplayName, string? Email, UserRole Role, bool IsActive, string? TenantStatus, string GymName, string GymSlug);
 
 public interface IPasswordResetStore
 {
     /// <param name="identifier">E-mail (has a <c>@</c>) or username.</param>
-    Task<ResetTarget?> FindAsync(string tenantSlug, string identifier, CancellationToken cancellationToken);
+    /// <param name="tenantSlug">The gym; <c>null</c> looks among the platform administrators.</param>
+    Task<ResetTarget?> FindAsync(string? tenantSlug, string identifier, CancellationToken cancellationToken);
 }
 
 /// <summary>Who the first link is for; it changes the wording of the e-mail.</summary>
@@ -109,14 +110,15 @@ public sealed class PasswordSetupService(
         }
 
         var token = Base64Url(RandomNumberGenerator.GetBytes(32));
-        var issued = await store.IssueAsync(target.UserId, Hash(token), clock.GetUtcNow().Add(policy.ResetValidity), "reset", policy.ResetMinGap, cancellationToken);
+        var validity = ResetValidityFor(target);
+        var issued = await store.IssueAsync(target.UserId, Hash(token), clock.GetUtcNow().Add(validity), "reset", policy.ResetMinGap, cancellationToken);
         if (!issued)
         {
             return; // asked again within seconds: the first e-mail is on its way
         }
 
         var link = $"{policy.PublicUrl.TrimEnd('/')}/#setup={token}";
-        var minutes = (int)policy.ResetValidity.TotalMinutes;
+        var minutes = (int)validity.TotalMinutes;
         try
         {
             await email.SendAsync(ResetMessage(target, link, minutes), cancellationToken);
@@ -162,8 +164,27 @@ public sealed class PasswordSetupService(
         return card.ToMessage(to.Email, subject, to.GymName);
     }
 
+    /// <summary>A platform administrator controls every gym, so their link lives at most <see cref="PlatformResetMinutes"/> minutes.</summary>
+    private TimeSpan ResetValidityFor(ResetTarget target) =>
+        target.Role == UserRole.PlatformAdmin ? TimeSpan.FromMinutes(Math.Min(PlatformResetMinutes, policy.ResetValidity.TotalMinutes)) : policy.ResetValidity;
+
+    private const int PlatformResetMinutes = 15;
+
     private static EmailMessage ResetMessage(ResetTarget target, string link, int minutes)
     {
+        if (target.Role == UserRole.PlatformAdmin)
+        {
+            var admin = new EmailCard(
+                "FitOS",
+                "Restablece tu contraseña",
+                [$"Hola {target.DisplayName},", "Pediste cambiar la contraseña de tu cuenta de administrador de plataforma. Usa el botón para elegir una nueva."],
+                "Mensaje de seguridad de FitOS.",
+                ButtonText: "Elegir nueva contraseña",
+                Url: link,
+                Warning: $"El enlace vence en {minutes} minutos y sirve una sola vez. Si no lo pediste tú, ignora este correo y revisa quién tiene acceso a tu buzón: tu contraseña actual sigue funcionando.");
+            return admin.ToMessage(target.Email!, "FitOS: restablece tu contraseña de administrador");
+        }
+
         var card = new EmailCard(
             target.GymName,
             "Restablece tu contraseña",
