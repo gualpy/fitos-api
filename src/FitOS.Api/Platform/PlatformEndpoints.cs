@@ -96,6 +96,7 @@ public static class PlatformEndpoints
             t.DaysLeft,
             t.CreatedAt,
             t.Customers,
+            t.OwnerState,
         }));
 
     private static async Task<IResult> ExtendAsync(Guid tenantId, ExtendRequest body, ClaimsPrincipal user, PlatformService service, CancellationToken ct)

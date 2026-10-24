@@ -190,6 +190,27 @@ public sealed class SubscriptionApiTests(PostgresFixture db) : IClassFixture<Pos
     }
 
     [SkippableFact]
+    public async Task The_list_says_whether_each_owner_has_created_a_password()
+    {
+        Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
+        var (pending, _) = await NewTenant(daysLeft: 20);
+        var (active, _) = await NewTenant(daysLeft: 20);
+        var (nobody, _) = await NewTenant(daysLeft: 20);
+        await NewUser(pending, "dueno", "owner");
+        await db.ScalarAsync("UPDATE users SET must_change_password = true WHERE tenant_id = @t RETURNING 1", ("t", pending));
+        await NewUser(active, "dueno", "owner");
+        await NewUser(nobody, "recepcion", "reception"); // staff are not the owner
+        var platform = await Platform();
+
+        var rows = (await Json(await platform.GetAsync("/platform/tenants"))).EnumerateArray().ToList();
+
+        string StateOf(Guid id) => rows.Single(t => t.GetProperty("id").GetGuid() == id).GetProperty("ownerState").GetString()!;
+        Assert.Equal("pending", StateOf(pending));
+        Assert.Equal("active", StateOf(active));
+        Assert.Equal("none", StateOf(nobody));
+    }
+
+    [SkippableFact]
     public async Task Platform_endpoints_refuse_gym_staff_and_anonymous_callers_and_validate_input()
     {
         Skip.IfNot(PostgresFixture.Available, "FITOS_TEST_PG not set");
