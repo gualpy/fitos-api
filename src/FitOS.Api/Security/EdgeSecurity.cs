@@ -3,7 +3,6 @@ using System.Security.Claims;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
-using IPNetwork = Microsoft.AspNetCore.HttpOverrides.IPNetwork;
 using Microsoft.AspNetCore.Http.Features;
 
 namespace FitOS.Api.Security;
@@ -58,15 +57,15 @@ public static class EdgeSecurity
             options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
             options.ForwardLimit = 1; // exactly the one proxy in front of us
             options.KnownProxies.Clear(); // the framework default trusts loopback: here only what is configured counts
-            options.KnownNetworks.Clear();
+            options.KnownIPNetworks.Clear();
             parsedProxies.ForEach(options.KnownProxies.Add);
-            parsedNetworks.ForEach(options.KnownNetworks.Add);
+            parsedNetworks.ForEach(options.KnownIPNetworks.Add);
         });
 
         return parsedProxies.Count + parsedNetworks.Count > 0;
     }
 
-    private static IPNetwork ParseNetwork(string cidr)
+    private static System.Net.IPNetwork ParseNetwork(string cidr)
     {
         var parts = cidr.Split('/');
         if (parts.Length != 2 || !IPAddress.TryParse(parts[0], out var ip) || !int.TryParse(parts[1], out var prefix)
@@ -75,7 +74,7 @@ public static class EdgeSecurity
             throw new InvalidOperationException($"Proxy:KnownNetworks has an invalid CIDR: '{cidr}'.");
         }
 
-        return new IPNetwork(ip, prefix);
+        return new System.Net.IPNetwork(ip, prefix);
     }
 
     public static void AddEdgeRateLimiting(this RateLimiterOptions limiter, SecurityOptions security)
