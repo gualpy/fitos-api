@@ -13,6 +13,9 @@ namespace FitOS.IntegrationTests.Attendance;
 /// <summary>The development seed writes real rows (user, membership, attendance) and the API serves them.</summary>
 public sealed class DevSeederTests(PostgresFixture db) : IClassFixture<PostgresFixture>
 {
+    private static DateOnly ToDate(object? value) =>
+        value is DateOnly d ? d : DateOnly.FromDateTime((DateTime)value!);
+
     private const string SeedPassword = "Seeded-Pass-1";
 
     private static readonly IdentityPasswordService Hasher = new();
@@ -55,7 +58,7 @@ public sealed class DevSeederTests(PostgresFixture db) : IClassFixture<PostgresF
         // Memberships: back to back, no gap, no overlap, covering the whole window up to today.
         var today = TodayEc();
         var memberships = (await db.RowsAsync("SELECT starts_on, ends_on FROM memberships WHERE customer_id = @c AND status = 'active' ORDER BY starts_on", ("c", customer)))
-            .Select(r => (Start: DateOnly.FromDateTime((DateTime)r[0]!), End: DateOnly.FromDateTime((DateTime)r[1]!))).ToList();
+            .Select(r => (Start: ToDate(r[0]), End: ToDate(r[1]))).ToList();
         Assert.Equal(today.AddDays(-19), memberships[0].Start);
         Assert.True(memberships[^1].End >= today);
         for (var i = 1; i < memberships.Count; i++)
@@ -67,7 +70,7 @@ public sealed class DevSeederTests(PostgresFixture db) : IClassFixture<PostgresF
         var perDay = (await db.RowsAsync(
                 "SELECT (check_in AT TIME ZONE 'America/Guayaquil')::date, count(*), bool_and(result = 'granted') FROM attendance WHERE customer_id = @c GROUP BY 1",
                 ("c", customer)))
-            .ToDictionary(r => DateOnly.FromDateTime((DateTime)r[0]!), r => ((long)r[1]!, (bool)r[2]!));
+            .ToDictionary(r => ToDate(r[0]), r => ((long)r[1]!, (bool)r[2]!));
         for (var back = 1; back < 20; back++)
         {
             var day = today.AddDays(-back);
@@ -122,7 +125,7 @@ public sealed class DevSeederTests(PostgresFixture db) : IClassFixture<PostgresF
             .Select(r => (int)r[0]!).ToList();
         Assert.Equal([3], weekdays);
         var hours = await db.RowsAsync("SELECT min((check_in AT TIME ZONE 'America/Guayaquil')::time), max((check_in AT TIME ZONE 'America/Guayaquil')::time) FROM attendance WHERE customer_id = @c", ("c", customer));
-        Assert.True((TimeSpan)hours[0][0]! >= TimeSpan.FromHours(10));
+        Assert.True((hours[0][0] is TimeOnly ht ? ht.ToTimeSpan() : (TimeSpan)hours[0][0]!) >= TimeSpan.FromHours(10));
     }
 
     [SkippableFact]

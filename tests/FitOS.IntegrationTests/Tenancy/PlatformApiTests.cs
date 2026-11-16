@@ -229,7 +229,9 @@ public sealed class PlatformApiTests(PostgresFixture db) : IClassFixture<Postgre
         var audit = (string)(await db.ScalarAsync("SELECT after::text FROM audit_log WHERE tenant_id = @id AND action = 'tenant.onboarded' AND user_id = @actor", ("id", tenantId), ("actor", adminId)))!;
         Assert.Contains(slug, audit);
         Assert.DoesNotContain(ProviderKey, audit);
-        Assert.Equal(30, ((DateTime)(await db.ScalarAsync("SELECT subscription_ends_on FROM tenants WHERE id = @id", ("id", tenantId)))! - DateTime.UtcNow.Date).Days);
+        var endsRaw = await db.ScalarAsync("SELECT subscription_ends_on FROM tenants WHERE id = @id", ("id", tenantId));
+        var endsOn = endsRaw is DateOnly endsDate ? endsDate : DateOnly.FromDateTime((DateTime)endsRaw!);
+        Assert.Equal(30, endsOn.DayNumber - DateOnly.FromDateTime(DateTime.UtcNow).DayNumber);
         Assert.Equal("Dueno.Titan@gym.test", await db.ScalarAsync("SELECT email::text FROM users WHERE tenant_id = @id AND role = 'owner'", ("id", tenantId)));
 
         // The owner gets an e-mail with a one-time link; before using it the account cannot log in with anything.
