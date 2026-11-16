@@ -68,6 +68,17 @@ public static class DevSeeder
         await connection.OpenAsync(cancellationToken);
         await using var tx = await connection.BeginTransactionAsync(cancellationToken);
 
+        static T ConvertScalar<T>(object value)
+        {
+            var target = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+            return value switch
+            {
+                DateOnly d when target == typeof(DateTime) => (T)(object)d.ToDateTime(TimeOnly.MinValue),
+                TimeOnly t when target == typeof(TimeSpan) => (T)(object)t.ToTimeSpan(),
+                _ => (T)value,
+            };
+        }
+
         async Task<T?> Scalar<T>(string sql, params (string Name, object? Value)[] args)
         {
             await using var command = new NpgsqlCommand(sql, connection, tx);
@@ -77,7 +88,7 @@ public static class DevSeeder
             }
 
             var result = await command.ExecuteScalarAsync(cancellationToken);
-            return result is null or DBNull ? default : (T)result;
+            return result is null or DBNull ? default : ConvertScalar<T>(result);
         }
 
         async Task<int> Run(string sql, params (string Name, object? Value)[] args)
