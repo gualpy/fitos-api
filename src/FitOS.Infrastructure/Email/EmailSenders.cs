@@ -39,6 +39,9 @@ public sealed class EmailOptions
     [Range(1, 120)]
     public int TimeoutSeconds { get; init; } = 20;
 
+    /// <summary>Checks the server certificate against its CRL/OCSP. Keep it on; off only for a local dev server whose CA publishes no revocation data.</summary>
+    public bool CheckCertificateRevocation { get; init; } = true;
+
     public bool IsConfigured => Host.Length > 0 && From.Length > 0;
 }
 
@@ -49,7 +52,11 @@ public sealed class MailKitDelivery(IOptions<EmailOptions> options) : ISmtpDeliv
     {
         var mime = Build(settings, message);
 
-        using var client = new SmtpClient { Timeout = options.Value.TimeoutSeconds * 1000 };
+        using var client = new SmtpClient
+        {
+            Timeout = options.Value.TimeoutSeconds * 1000,
+            CheckCertificateRevocation = options.Value.CheckCertificateRevocation,
+        };
         try
         {
             var tls = settings.Security == SmtpSecurity.SslOnConnect ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls;
